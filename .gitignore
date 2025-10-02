@@ -1,0 +1,58 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+hmlcov/
+htmlcov/
+
+# Type checking / linters
+.mypy_cache/
+.pytype/
+.ruff_cache/
+
+# Caches
+.cache/
+
+# Logs
+*.log
+
+# Databases
+*.sqlite3
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node (used via npx in tooling)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Local data / temp
+.tmp/
+*.tmp
