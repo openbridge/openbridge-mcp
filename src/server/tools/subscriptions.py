@@ -5,6 +5,7 @@ from .base import get_auth_headers
 from .remote_identity import get_remote_identity_by_id
 from typing import Any, Dict, List, Optional
 import os
+from fastmcp.server.context import Context
 
 logger = get_logger("subscriptions")
 SUBSCRIPTIONS_PAGE_SIZE = 1000
@@ -35,7 +36,11 @@ STORAGE_TYPE_MAPPING = {  # TODO: Add more storage types
 SPM_REQUIRED_PARAMS = ['dataset_id',]
 
 
-def get_subscriptions(status: str = 'active', only_storages: bool = True) -> List[Dict[Any, Any]]:
+def get_subscriptions(
+    status: str = 'active',
+    only_storages: bool = True,
+    ctx: Optional[Context] = None,
+) -> List[Dict[Any, Any]]:
     """
     Get the subscriptions related to the current user.
     This function retrieves the subscriptions associated with the user whose token is being used for authentication.
@@ -74,7 +79,9 @@ def get_subscriptions(status: str = 'active', only_storages: bool = True) -> Lis
     logger.debug(f"Retrieved {len(subscriptions)} subscriptions")
     return subscriptions
 
-def get_storage_subscriptions() -> List[Dict[Any, Any]]:
+def get_storage_subscriptions(
+    ctx: Optional[Context] = None,
+) -> List[Dict[Any, Any]]:
     """
     Get the storage subscriptions related to the current user.
     This function retrieves the subscriptions associated with the user whose token is being used for authentication,
