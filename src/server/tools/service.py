@@ -1,10 +1,15 @@
+import json
+import re
+from typing import Any
+
 import requests
 
 from src.utils.logging import get_logger
 from .base import get_auth_headers
 from .remote_identity import get_remote_identity_by_id
-from typing import Dict, List, Optional
 import os
+from fastmcp.server.context import Context
+from typing import Dict, List, Optional
 
 logger = get_logger("service")
 
@@ -15,7 +20,155 @@ AMZADV_REGIONAL_BASE_URLS = {
     "fe": "https://advertising-api-fe.amazon.com",
 }
 
-def execute_query(query: str, key_name: str): 
+MUTATING_KEYWORDS = (
+    "insert",
+    "update",
+    "delete",
+    "drop",
+    "alter",
+    "create",
+    "truncate",
+    "merge",
+)
+
+LIMIT_PATTERN = re.compile(r"limit\s+\d", re.IGNORECASE)
+
+
+def _find_mutating_keywords(query: str) -> List[str]:
+    """Return mutating keywords detected in the SQL string."""
+    query_lower = query.lower()
+    return [kw for kw in MUTATING_KEYWORDS if re.search(rf"\b{kw}\b", query_lower)]
+
+
+def _has_limit_clause(query: str) -> bool:
+    """Determine whether the SQL string contains a LIMIT clause."""
+    return bool(LIMIT_PATTERN.search(query))
+
+
+async def validate_query(
+    query: str,
+    key_name: str,
+    allow_unbounded: bool = False,
+    ctx: Optional[Context] = None,
+) -> Dict[str, Any]:
+    """Use sampling to assess query safety before execution.
+
+    Args:
+        query: Fully formed SQL query the caller intends to run.
+        key_name: Storage/account mapping key the query targets.
+        ctx: FastMCP context providing sampling capabilities.
+
+    Returns:
+        Dict[str, Any]: Structured assessment including heuristic findings,
+        sampling feedback, and a recommended allow/deny decision.
+    """
+
+    if ctx is None:
+        raise ValueError("Context is required for validate_query")
+
+    query_trimmed = query.strip()
+    mutating_keywords = _find_mutating_keywords(query_trimmed)
+    has_limit = _has_limit_clause(query_trimmed)
+    select_star = bool(re.search(r"select\s+\*", query_trimmed, re.IGNORECASE))
+
+    heuristics: Dict[str, Any] = {
+        "read_only": not mutating_keywords,
+        "has_limit": has_limit,
+        "uses_select_star": select_star,
+        "allow_unbounded": allow_unbounded,
+        "warnings": [],
+    }
+
+    if mutating_keywords:
+        heuristics["warnings"].append(
+            f"Query contains potential mutating keywords: {', '.join(mutating_keywords)}"
+        )
+    if not has_limit:
+        if allow_unbounded:
+            heuristics["warnings"].append(
+                "Query does not include a LIMIT clause; override allow_unbounded=True permits execution."
+            )
+        else:
+            heuristics["warnings"].append(
+                "Query lacks a LIMIT clause and no override was provided; execution will be denied."
+            )
+    if select_star:
+        heuristics["warnings"].append(
+            "Query selects all columns; consider projecting specific fields."
+        )
+    if not key_name:
+        heuristics["warnings"].append("No key_name provided.")
+
+    sampling_feedback: Dict[str, Any] = {"supported": True, "details": None}
+    sampling_allows = True
+
+    system_prompt = (
+        "You evaluate SQL queries for a read-only analytics service. "
+        "Return JSON with: read_only (bool), risk_level (low|medium|high), "
+        "issues (list of strings), recommendations (list of strings), "
+        "and allow (bool) indicating whether to proceed."
+    )
+    user_prompt = (
+        "Account mapping key: {key}\nSQL Query:\n{query}".format(
+            key=key_name or "<missing>", query=query_trimmed
+        )
+    )
+
+    try:
+        response = await ctx.sample(
+            messages=[user_prompt],
+            system_prompt=system_prompt,
+            temperature=0,
+            max_tokens=400,
+        )
+        raw_text = response.text.strip()
+        sampling_feedback["raw"] = raw_text
+        try:
+            parsed = json.loads(raw_text)
+            sampling_feedback["details"] = parsed
+            sampling_allows = bool(parsed.get("allow", True)) and bool(
+                parsed.get("read_only", True)
+            )
+        except json.JSONDecodeError:
+            sampling_feedback["supported"] = False
+            sampling_feedback["error"] = "Sampling response was not valid JSON."
+            sampling_allows = False
+    except Exception as exc:  # pragma: no cover - runtime safeguard
+        sampling_feedback["supported"] = False
+        sampling_feedback["error"] = str(exc)
+        sampling_allows = heuristics["read_only"]
+
+    limit_ok = has_limit or allow_unbounded
+
+    overall_allowed = heuristics["read_only"] and sampling_allows and limit_ok
+
+    result = {
+        "query": query_trimmed,
+        "key_name": key_name,
+        "decision": {
+            "allowed": overall_allowed,
+            "heuristics_read_only": heuristics["read_only"],
+            "sampling_allows": sampling_allows,
+            "limit_ok": limit_ok,
+        },
+        "heuristics": heuristics,
+        "sampling": sampling_feedback,
+    }
+
+    if overall_allowed and not has_limit:
+        result.setdefault("notes", []).append(
+            "Query approved but lacks LIMIT; monitor downstream result size."
+        )
+
+    logger.debug("validate_query result: %s", result)
+    return result
+
+async def execute_query(
+    query: str,
+    key_name: str,
+    allow_unbounded: bool = False,
+    ctx: Optional[Context] = None,
+): 
     """
     Execute a SQL query in the query API (proxied through the service API) and return the results.
 
@@ -43,6 +196,22 @@ def execute_query(query: str, key_name: str):
         }
     }
     """
+    if ctx is None:
+        raise ValueError("Context is required for execute_query")
+
+    validation = await validate_query(
+        query,
+        key_name,
+        allow_unbounded=allow_unbounded,
+        ctx=ctx,
+    )
+    if not validation["decision"]["allowed"]:
+        logger.warning(
+            "Query validation failed; denying execution. decision=%s",
+            validation["decision"],
+        )
+        return [{"error": "Query validation failed", "validation": validation}]
+
     headers = get_auth_headers()
     payload = {
         "data": {
@@ -61,17 +230,29 @@ def execute_query(query: str, key_name: str):
         json=payload,
         headers=headers
     )
-    print("Response from Service API: " + str(response.status_code) + " - " + response.text)
     if response.status_code == 200:
         data = response.json().get("data", [])
-        logger.debug(f"Executed query: {query}. Response: {data}")
         return data
     else:
-        logger.warning(f"Failed to execute query: {query}, response: {response.status_code} {response.text}")
-        return [{"error": f"Failed to execute query: {response.status_code} {response.text}"}]
+        logger.warning(
+            "Failed to execute query: status=%s error=%s",
+            response.status_code,
+            response.text,
+        )
+        return [
+            {
+                "error": "Failed to execute query",
+                "status": response.status_code,
+                "details": response.text,
+                "validation": validation,
+            }
+        ]
 
 # Note: This function should typically be used internally rather than called as a tool.
-def get_amazon_api_access_token(remote_identity_id: int) -> dict:
+def get_amazon_api_access_token(
+    remote_identity_id: int,
+    ctx: Optional[Context] = None,
+) -> dict:
     """
     Get the Amazon API access token for a given remote identity ID. This token may be used for making direct API calls to Amazon Advertising services.
     If the remote identity is not found or the token cannot be retrieved, the function returns None.
@@ -97,7 +278,10 @@ def get_amazon_api_access_token(remote_identity_id: int) -> dict:
         return str(response.json())
     return {"access_token": access_token, "client_id": client_id}
 
-def get_amazon_advertising_profiles(remote_identity_id: int) -> List[dict]:
+def get_amazon_advertising_profiles(
+    remote_identity_id: int,
+    ctx: Optional[Context] = None,
+) -> List[dict]:
     """
     List the Amazon Advertising profiles for a given remote identity ID.
 
@@ -107,12 +291,12 @@ def get_amazon_advertising_profiles(remote_identity_id: int) -> List[dict]:
         List[dict]: A list of Amazon Advertising profiles.
     """
     # Obtain the remote identity
-    remote_identity = get_remote_identity_by_id(remote_identity_id)
+    remote_identity = get_remote_identity_by_id(remote_identity_id, ctx=ctx)
     if not remote_identity:
         logger.warning(f"Remote identity {remote_identity_id} not found. Cannot retrieve advertising profiles.")
         return []
     # Obtain the Amazon Advertising access token
-    token_info = get_amazon_api_access_token(remote_identity_id)
+    token_info = get_amazon_api_access_token(remote_identity_id, ctx=ctx)
     if not token_info or 'access_token' not in token_info:
         logger.warning(f"No access token available for remote identity {remote_identity_id}. Cannot retrieve advertising profiles.")
         return []
@@ -134,7 +318,10 @@ def get_amazon_advertising_profiles(remote_identity_id: int) -> List[dict]:
         return []
 
 
-def get_suggested_table_names(query: str) -> List[str] | str:
+def get_suggested_table_names(
+    query: str,
+    ctx: Optional[Context] = None,
+) -> List[str] | str:
     """
     Given a query string, obtain a list of possible table names from the rules API (through the service API).
 
@@ -167,7 +354,10 @@ def get_suggested_table_names(query: str) -> List[str] | str:
         return []
 
 
-def get_table_rules(tablename: str) -> Optional[dict]:
+def get_table_rules(
+    tablename: str,
+    ctx: Optional[Context] = None,
+) -> Optional[dict]:
     """
     Get the rules for a given table name from the rules API.
 
