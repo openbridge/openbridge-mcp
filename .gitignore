@@ -56,3 +56,4 @@ yarn-error.log*
 # Local data / temp
 .tmp/
 *.tmp
+fastagent.jsonl

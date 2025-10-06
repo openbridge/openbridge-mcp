@@ -3,11 +3,15 @@ from .base import get_auth_headers
 from typing import List, Optional
 import requests
 import os
+from fastmcp.server.context import Context
 
 logger = get_logger("products")
 
 
-def get_product_stage_ids(product_id: Optional[str]) -> List[dict]:
+def get_product_stage_ids(
+    product_id: Optional[str],
+    ctx: Optional[Context] = None,
+) -> List[dict]:
     """
     Get the stage IDs for a specific product.
     Args:
@@ -27,4 +31,3 @@ def get_product_stage_ids(product_id: Optional[str]) -> List[dict]:
     else:
         logger.warning(f"Failed to retrieve product stage IDs for {product_id}: {response.status_code}")
         return [{"error": f"Failed to retrieve product stage IDs: {response.status_code} {response.text}"}]
-
