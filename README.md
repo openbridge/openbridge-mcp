@@ -47,7 +47,12 @@ Required for server and tools to function. Values typically point to your enviro
   - `JOBS_API_BASE_URL`: Base URL for Jobs API
   - `HISTORY_API_BASE_URL`: Base URL for History API (creating one-off jobs)
   - `SUBSCRIPTIONS_API_BASE_URL`: Base URL for Subscriptions API
-  - `PRODUCT_API_BASE_URL`: Base URL for Product API
+- `PRODUCT_API_BASE_URL`: Base URL for Product API
+
+- Sampling (optional)
+  - `FASTMCP_SAMPLING_API_KEY`: API key used for server-side FastMCP sampling fallback (falls back to `OPENAI_API_KEY`).
+  - `FASTMCP_SAMPLING_MODEL` (default `gpt-4o-mini`): Model used when sampling from the MCP server.
+  - `FASTMCP_SAMPLING_BASE_URL` (optional): Override base URL for OpenAI-compatible providers.
 
 Example `.env` template:
 ```bash
@@ -92,8 +97,10 @@ Below are the MCP tools registered by the server and their purpose/parameters. A
     - Returns a specific remote identity; flattens `attributes` into top-level keys.
 
 - Service / Query / Rules
-  - `execute_query(query: str, key_name: str) -> List[dict]`
-    - Executes SQL via Service API’s query endpoint. `key_name` is the account mapping key.
+  - `validate_query(query: str, key_name: str, allow_unbounded: bool = False) -> dict`
+    - Uses FastMCP sampling plus heuristics to enforce read-only rules; denies queries without `LIMIT` unless `allow_unbounded=True`.
+  - `execute_query(query: str, key_name: str, allow_unbounded: bool = False) -> List[dict]`
+    - Executes SQL via Service API only after `validate_query` approves; pass `allow_unbounded=True` to intentionally run without a `LIMIT`.
   - `get_amazon_api_access_token(remote_identity_id: int) -> dict`
     - Retrieves Amazon Advertising API access token and client id for a remote identity.
   - `get_amazon_advertising_profiles(remote_identity_id: int) -> List[dict]`

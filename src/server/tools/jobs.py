@@ -5,15 +5,17 @@ from .base import get_auth_headers
 from typing import Any, Dict, List, Optional
 from datetime import datetime as dt, timedelta as td
 import os
+from fastmcp.server.context import Context
 
 logger = get_logger("jobs")
 
 
 def get_jobs(
-        subscription_id: int, 
-        status: Optional[str] = 'active',
-        is_primary: Optional[str] = 'true'
-    ) -> List[Dict[Any, Any]]:
+    subscription_id: int,
+    status: Optional[str] = 'active',
+    is_primary: Optional[str] = 'true',
+    ctx: Optional[Context] = None,
+) -> List[Dict[Any, Any]]:
     """
     Fetches jobs from the Openbridge API.
 
@@ -52,10 +54,11 @@ def get_jobs(
 
 
 def create_oneoff_jobs(
-        subscription_id: int, 
-        date_start: str,
-        date_end: str,
-        stage_ids: List[int]
+    subscription_id: int,
+    date_start: str,
+    date_end: str,
+    stage_ids: List[int],
+    ctx: Optional[Context] = None,
 ) -> List[Dict[Any, Any]]:
     """
     Creates history (one-off) jobs for a given subscription.
