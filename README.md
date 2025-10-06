@@ -124,3 +124,8 @@ Below are the MCP tools registered by the server and their purpose/parameters. A
   - Tools return empty lists or dictionaries with an `error` key when API calls fail; check responses for errors.
 - Networking
   - Server binds to all interfaces (`0.0.0.0`). Ensure firewall/network rules allow your MCP client to reach `MCP_PORT`.
+- Per-client authentication
+  - The MCP server uses a single `OPENBRIDGE_REFRESH_TOKEN` for all tool calls; downstream access is shared across clients.
+  - Deployers must layer their own client authentication (e.g., network isolation, mTLS proxies, signed client configs, or OS-level ACLs) to ensure only trusted agents can invoke the server.
+  - Rotate tokens regularly and monitor access logs to detect misuse when multiple operators share the same deployment.
+  - You can also plug FastMCP’s standard authentication providers directly into this server (JWT validation, OAuth proxy, WorkOS AuthKit, etc.) if you prefer first-class per-client auth at the MCP layer; choose the provider that aligns with your org’s identity stack.
