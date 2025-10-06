@@ -3,11 +3,15 @@ from .base import get_auth_headers
 from typing import List, Optional
 import requests
 import os
+from fastmcp.server.context import Context
 
 logger = get_logger("remote_identities")
 
 
-def get_remote_identities(remote_identity_type_id: Optional[str]) -> List[dict]:
+def get_remote_identities(
+    remote_identity_type_id: Optional[str] = None,
+    ctx: Optional[Context] = None,
+) -> List[dict]:
     """
     Get the remote identities for the current user.
     This function retrieves the remote identities associated with the user whose token is being used for authentication.
@@ -32,7 +36,10 @@ def get_remote_identities(remote_identity_type_id: Optional[str]) -> List[dict]:
         logger.warning(f"Failed to retrieve remote identities: {response.status_code}")
         return []
 
-def get_remote_identity_by_id(remote_identity_id: str) -> dict:
+def get_remote_identity_by_id(
+    remote_identity_id: str,
+    ctx: Optional[Context] = None,
+) -> dict:
     """
     Get a specific remote identity by its ID.
     

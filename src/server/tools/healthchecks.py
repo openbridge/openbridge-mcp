@@ -5,13 +5,18 @@ from .base import get_auth_headers
 from .remote_identity import get_remote_identity_by_id
 from typing import Any, Dict, List, Optional
 import os
+from fastmcp.server.context import Context
 
 logger = get_logger("healthchecks")
 HEALTHCHECKS_PAGE_SIZE = 20
 HEALTHCHECKS_MAX_PAGES = 10  # Limit to prevent infinite loops in pagination
 
 
-def get_healthchecks(subscription_id: Optional[str] = None, filter_date: Optional[str] = None) -> List[Dict[Any, Any]]:
+def get_healthchecks(
+    subscription_id: Optional[str] = None,
+    filter_date: Optional[str] = None,
+    ctx: Optional[Context] = None,
+) -> List[Dict[Any, Any]]:
     """
     Get the healthchecks related to the current user.
     This function retrieves the health checks associated with the user whose token is being used for authentication.

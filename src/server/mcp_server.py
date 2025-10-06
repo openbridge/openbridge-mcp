@@ -15,6 +15,7 @@ from src.server.tools.account_openapi import AccountOpenAPI
 from src.server.tools.subscriptions_openapi import SubscriptionsOpenAPI
 from src.auth.authentication import create_auth_middleware, create_openbridge_config
 from src.auth.manager import get_auth_manager
+from src.server.sampling import create_sampling_handler
 
 
 logger = get_logger("mcp_server")
@@ -28,11 +29,14 @@ def create_mcp_server() -> FastMCP:
     auth_manager = get_auth_manager()
     middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
 
+    sampling_handler = create_sampling_handler()
+
     # Initialize FastMCP server
     mcp = FastMCP(
         name="Openbridge MCP",
         instructions="Openbridge MCP server for utilizing a variety of API endpoints and tools.",
         middleware=middleware,
+        sampling_handler=sampling_handler,
     )
 
     # Register tools
@@ -47,8 +51,12 @@ def create_mcp_server() -> FastMCP:
     )(remote_identity_tools.get_remote_identity_by_id)
     # Service Tools
     mcp.tool(
+        name='validate_query',
+        description='Analyze SQL with sampling, requiring a LIMIT unless allow_unbounded=True.',
+    )(service_tools.validate_query)
+    mcp.tool(
         name='execute_query',
-        description='Execute a SQL query in the query API and return the results. Requires a SQL query and a key name for the account mapping.',
+        description='Validate then execute a SQL query; defaults to requiring LIMIT unless allow_unbounded=True.',
     )(service_tools.execute_query)
     mcp.tool(
         name='get_amazon_api_access_token',
@@ -66,17 +74,6 @@ def create_mcp_server() -> FastMCP:
         name='get_suggested_table_names',
         description="""
     Given a query string, obtain a list of possible table names from the rules API (through the service API).
-
-    INSTRUCTIONS: Based on a user's request, determine the best query key to use.
-    * If the user makes a request related to "amazon ads sponsored products", use the key "amazon-ads/amzn_ads_sp"
-    * If the user makes a request related to "amazon ads sponsored brands", use the key "amazon-ads/amzn_ads_sb"
-    * If the user makes a request related to "amazon ads sponsored display", use the key "amazon-ads/amzn_ads_sd"
-    * If the user makes a request related to "Amazon DSP", use the key "amazon-dsp/"
-    * If the user makes *any* request which doesn't fit into the above categories, deny the request and assert that only the specified keys are allowed.
-
-    This tool will *ONLY* allow the above keys. Do not invent or create any new keys. 
-
-    The response should be inspected for an error message to give the client an opportunity to fix the issue.
 
     Args:
         query (str): The SQL query to analyze.
