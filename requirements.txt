@@ -1,0 +1,5 @@
+fastmcp
+python-dotenv
+requests
+pydantic
+PyJWT

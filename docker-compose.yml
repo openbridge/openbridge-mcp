@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  openbridge-mcp:
+    build: .
+    ports:
+      - "8010:8010"
+    volumes:
+      - type: bind
+        source: .env
+        target: /app/.env
+        read_only: true
+    restart: unless-stopped
