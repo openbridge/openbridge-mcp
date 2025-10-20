@@ -375,12 +375,10 @@ def get_table_rules(
     # Remove the '_master' suffix if present to match the rule path
     if tablename.endswith('_master'):
         tablename = tablename[:-7]
-        print("Stripped '_master' suffix, now looking for rules for table: " + tablename)
     response = requests.get(
         f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search?path={tablename}&latest=true",
         headers=headers
     )
-    print("Response from Rules API: " + str(response.status_code) + " - " + response.text)
     if response.status_code == 200:
         rules = response.json().get("data", [])
         if rules:
