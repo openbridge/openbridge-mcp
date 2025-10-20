@@ -23,15 +23,6 @@ As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to cr
    - The server listens on `0.0.0.0:${MCP_PORT}` using HTTP transport.
 4. Connect from an MCP client. Example for the `fastagent` `mcp-remote` client is shown below.
 
-### Launch options
-- `python main.py`
-  - Uses `.env` at project root
-  - Host: `0.0.0.0`
-  - Transport: `http`
-  - Port: `MCP_PORT` (default `8010`)
-
-If you are using the included `fastagent.config.yaml` with `mcp-remote` that points to `http://localhost:8010/mcp`, set `MCP_PORT=8010` in `.env` so the URLs align.
-
 ### Environment variables (.env)
 Required for server and tools to function. Values typically point to your environment (dev/stage/prod) of Openbridge APIs.
 
