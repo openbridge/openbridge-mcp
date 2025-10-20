@@ -45,7 +45,6 @@ def get_auth_headers() -> Dict[str, str]:
             response.raise_for_status()
             
             auth_data = response.json()
-            logger.debug(f"Auth response: {auth_data}")
             jwt_token = auth_data.get("data", {}).get("attributes", {}).get("token")
             
             if jwt_token:

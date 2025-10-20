@@ -1,13 +1,23 @@
 ## Openbridge MCP Server
 
-A FastMCP-compatible server exposing tools to work with Openbridge APIs (remote identities, subscriptions, jobs, healthchecks, products, and query services).
+The *Openbridge MCP Server* is a FastMCP server which enables LLMs to perform various tasks within the Openbridge platform. 
 
-### Entrypoint
-- Run via Python: `main.py`
+## Deployment
 
-### Quick start
-1. Create a `.env` in this folder (see Variables below). At minimum set `MCP_PORT` and `OPENBRIDGE_REFRESH_TOKEN` plus API base URLs.
-2. Install dependencies for your environment (this project expects Python 3.10+ and the packages used in `src/` such as `fastmcp`, `python-dotenv`, `requests`).
+### Docker deployment
+1. Create a `.env` file at the project root with the variables listed below. The compose file mounts it into the container at `/app/.env`.
+2. Build and start the stack: `docker compose up --build -d openbridge-mcp`
+   - The compose file maps `8010:8010`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
+3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
+4. Connect your MCP client to `http://localhost:8010/mcp` (or the port you chose).
+
+If you prefer raw Docker commands, run `docker build -t openbridge-mcp .` and then start it with `docker run --env-file .env -p 8010:8010 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
+
+### Local deployment
+As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
+
+1. Create a `.env` in the project's root folder (see Variables below). At minimum set `MCP_PORT` and `OPENBRIDGE_REFRESH_TOKEN`.
+2. Run the command `uv venv --python 3.12.7 && uv pip install -r requirements.txt`
 3. Start the server:
    - Python: `python main.py`
    - The server listens on `0.0.0.0:${MCP_PORT}` using HTTP transport.
@@ -27,32 +37,8 @@ Required for server and tools to function. Values typically point to your enviro
 
 - Server
   - `MCP_PORT` (default `8010`): Port for the HTTP MCP server.
-
 - Authentication
   - `OPENBRIDGE_REFRESH_TOKEN`: Refresh token or bearer token used to obtain/send Authorization headers.
-  - `OPENBRIDGE_AUTH_BASE_URL` (default `https://authentication.api.openbridge.io`): Auth base for refresh endpoint.
-  - `REFRESH_TOKEN_ENDPOINT` (optional): If set, overrides the refresh endpoint; otherwise `${OPENBRIDGE_AUTH_BASE_URL}/auth/api/ref`.
-  - Advanced (optional, only if you enable full JWT validation via middleware patterns):
-    - `AUTH_ENABLED` (default `false`)
-    - `JWT_VALIDATION_ENABLED` (default `true`)
-    - `REFRESH_TOKEN_ENABLED` (default `false`)
-    - `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_JWKS_URI`, `JWT_PUBLIC_KEY`
-    - `JWT_VERIFY_SIGNATURE` (default `true`), `JWT_VERIFY_ISS` (default `true`), `JWT_VERIFY_AUD` (default `true`)
-    - `JWT_REQUIRED_CLAIMS` (comma-separated)
-
-- API base URLs (required by tools)
-  - `SERVICE_API_BASE_URL`: Base URL for the Service API (query, rules proxy)
-  - `REMOTE_IDENTITY_API_BASE_URL`: Base URL for Remote Identity API
-  - `HEALTHCHECKS_API_BASE_URL`: Base URL for Healthchecks API
-  - `JOBS_API_BASE_URL`: Base URL for Jobs API
-  - `HISTORY_API_BASE_URL`: Base URL for History API (creating one-off jobs)
-  - `SUBSCRIPTIONS_API_BASE_URL`: Base URL for Subscriptions API
-- `PRODUCT_API_BASE_URL`: Base URL for Product API
-
-- Sampling (optional)
-  - `FASTMCP_SAMPLING_API_KEY`: API key used for server-side FastMCP sampling fallback (falls back to `OPENAI_API_KEY`).
-  - `FASTMCP_SAMPLING_MODEL` (default `gpt-4o-mini`): Model used when sampling from the MCP server.
-  - `FASTMCP_SAMPLING_BASE_URL` (optional): Override base URL for OpenAI-compatible providers.
 
 Example `.env` template:
 ```bash
@@ -61,72 +47,86 @@ MCP_PORT=8010
 
 # Auth
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
-OPENBRIDGE_AUTH_BASE_URL=https://authentication.api.openbridge.io
 
-# APIs
-SERVICE_API_BASE_URL=https://service.api.openbridge.io
-REMOTE_IDENTITY_API_BASE_URL=https://remote-identity.api.openbridge.io
-HEALTHCHECKS_API_BASE_URL=https://service.api.openbridge.io/service/healthchecks/production/healthchecks/account
-JOBS_API_BASE_URL=https://service.api.openbridge.io/service/jobs
-SUBSCRIPTIONS_API_BASE_URL=https://subscriptions.api.openbridge.io
-HISTORY_API_BASE_URL=https://service.api.openbridge.io/service/history/production
-PRODUCT_API_BASE_URL=https://service.api.openbridge.io/service/products/product
+# OpenAI key is required for sampling, used in 
+# OPENAI_API_KEY=XXXXX
 ```
 
 ### Client configuration (example)
-This repository includes `fastagent.config.yaml` to connect with `mcp-remote` over HTTP.
+Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. Below is a sample configuration for use with Claude Desktop, assuming `MCP_PORT=8010` in your `.env` file.
 
-```yaml
-mcp:
-  servers:
-    openbridge:
-      command: npx
-      args: ["-y", "--allow-http", "mcp-remote", "http://localhost:8010/mcp"]
+```json
+{
+  "mcpServers": {
+    "openbridge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--allow-http",
+        "mcp-remote@latest",
+        "http://localhost:8010/mcp"
+      ]
+    }
+  }
+}
 ```
 
-- Start this MCP server with `MCP_PORT=8010`
-- Then start your MCP-compatible client that reads this config
+For more information about getting connected with Claude Desktop, visit the [**modelcontextprotocol** official documentation](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
 ### Tools exposed
-Below are the MCP tools registered by the server and their purpose/parameters. All calls use auth headers derived from `OPENBRIDGE_REFRESH_TOKEN`.
-
 - Remote identity
-  - `get_remote_identities(remote_identity_type_id: Optional[str]) -> List[dict]`
-    - Returns remote identities for current user; optional type filter.
-  - `get_remote_identity_by_id(remote_identity_id: str) -> dict`
-    - Returns a specific remote identity; flattens `attributes` into top-level keys.
+  - `get_remote_identities`
+    - Lists every remote identity linked to the current token, with an optional `remote_identity_type` filter if you only need one integration.
+    - Example LLM request: `List my remote identities`
+  - `get_remote_identity_by_id`
+    - Retrieves a single remote identity by ID and flattens the nested `attributes` into top-level keys for easier prompting.
+    - Example LLM request: `Fetch remote identity 12345 and show the flattened attributes`
 
-- Service / Query / Rules
-  - `validate_query(query: str, key_name: str, allow_unbounded: bool = False) -> dict`
-    - Uses FastMCP sampling plus heuristics to enforce read-only rules; denies queries without `LIMIT` unless `allow_unbounded=True`.
-  - `execute_query(query: str, key_name: str, allow_unbounded: bool = False) -> List[dict]`
-    - Executes SQL via Service API only after `validate_query` approves; pass `allow_unbounded=True` to intentionally run without a `LIMIT`.
-  - `get_amazon_api_access_token(remote_identity_id: int) -> dict`
-    - Retrieves Amazon Advertising API access token and client id for a remote identity.
-  - `get_amazon_advertising_profiles(remote_identity_id: int) -> List[dict]`
-    - Uses the access token to list Amazon Advertising profiles. Region is inferred from the remote identity.
-  - `get_suggested_table_names(query: str) -> List[str] | str`
-    - Searches Rules API (via Service) for matching rule paths; returns table names (with `_master` suffix). Includes strict usage guidance for allowed keys in the description.
-  - `get_table_rules(tablename: str) -> Optional[dict]`
-    - Fetches the rule document for a given table name; accepts names with or without `_master` suffix.
+- Query
+  - `validate_query`
+    - Runs a safety check against the FastMCP sampling guardrails to confirm a query is read-only and contains a `LIMIT` unless you explicitly pass `allow_unbounded=True`.
+    - Example LLM request: `Validate this SQL against key finance and confirm it has a LIMIT 25`
+  - `execute_query`
+    - Executes SQL through the Service API after validation succeeds; override the safeguard with `allow_unbounded=True` only when you intend to run without a `LIMIT`.
+    - Example LLM request: `Execute the validated SQL on key merchandising with LIMIT 100`
+
+- Rules
+  - `get_suggested_table_names`
+    - Searches the Rules API (via the Service API) for tables that match the intent of your SQL, returning `_master` suffixed table names plus usage guidance.
+    - Example LLM request: `Suggest the best table names for a query about sponsored product spend`
+  - `get_table_rules`
+    - Fetches the rules document for a table, whether or not you provide the `_master` suffix, so you can confirm allowed filters and columns.
+    - Example LLM request: `Show the rules for table retail_orders_master`
+
+- Service
+  - `get_amazon_api_access_token`
+    - Exchanges the remote identity for an Amazon Advertising API access token and its client ID so downstream calls can authenticate.
+    - Example LLM request: `Retrieve the Amazon Advertising access token for remote identity 42`
+  - `get_amazon_advertising_profiles`
+    - Uses the Amazon token to enumerate available advertising profiles, inferring the region from the remote identity metadata.
+    - Example LLM request: `List Amazon Advertising profiles for remote identity 42`
 
 - Healthchecks
-  - `get_healthchecks(subscription_id: Optional[str] = None, filter_date: Optional[str] = None) -> List[dict]`
-    - Lists healthchecks for the current account; supports basic filtering and pagination.
+  - `get_healthchecks`
+    - Lists healthchecks for the current account with optional subscription and date filters, returning pagination info alongside the results.
+    - Example LLM request: `List healthchecks for subscription 555 after 2024-01-01`
 
 - Jobs
-  - `get_jobs(subscription_id: int, status: Optional[str] = 'active', is_primary: Optional[str] = 'true') -> List[dict]`
-    - Lists jobs with filters; `subscription_id` is required.
-  - `create_oneoff_jobs(subscription_id: int, date_start: str, date_end: str, stage_ids: List[int]) -> List[dict] | [{"errors": ...}]`
-    - Creates history (one-off) jobs for the subscription. Start/end should be ISO strings; `stage_ids` can be sourced via `get_product_stage_ids`.
+  - `get_jobs`
+    - Returns jobs scoped to a subscription with optional status and primary flags so you can inspect running or historical syncs.
+    - Example LLM request: `List active primary jobs for subscription 987`
+  - `create_oneoff_jobs`
+    - Schedules one-off (historical) jobs for the subscription using ISO date strings and stage IDs that you can source from `get_product_stage_ids`.
+    - Example LLM request: `Create one-off jobs for subscription 987 from 2024-01-01 to 2024-01-07 using stage ids [12, 34]`
 
 - Products
-  - `get_product_stage_ids(product_id: Optional[str]) -> List[dict]`
-    - Returns stage IDs for a product (filters `stage_id__gte` to likely ranges).
+  - `get_product_stage_ids`
+    - Returns stage IDs for a product, applying sensible `stage_id__gte` filters so you can quickly feed the results into job creation.
+    - Example LLM request: `Look up the stage ids for product ob-product-123`
 
 ### Notes
 - Authentication
-  - If `OPENBRIDGE_REFRESH_TOKEN` looks like a refresh token (`xxx:yyy`), the server will attempt to exchange it for a JWT using `OPENBRIDGE_AUTH_BASE_URL` (or `REFRESH_TOKEN_ENDPOINT` if set). If the exchange fails, the raw token is used as Bearer.
+  - The server will attempt to exchange the `OPENBRIDGE_REFRESH_TOKEN` for a JWT.
 - Error handling
   - Tools return empty lists or dictionaries with an `error` key when API calls fail; check responses for errors.
 - Networking

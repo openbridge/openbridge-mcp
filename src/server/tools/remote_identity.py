@@ -7,6 +7,7 @@ from fastmcp.server.context import Context
 
 logger = get_logger("remote_identities")
 
+REMOTE_IDENTITY_API_BASE_URL = os.getenv("REMOTE_IDENTITY_API_BASE_URL", 'https://remote-identity.api.openbridge.io')
 
 def get_remote_identities(
     remote_identity_type_id: Optional[str] = None,
@@ -24,18 +25,17 @@ def get_remote_identities(
     """
     headers = get_auth_headers()
     params = {}
-    logger.debug(f"Auth headers: {headers}")
     remote_identities = []
     page = 1
     while page:
         if remote_identity_type_id:
             params['type'] = remote_identity_type_id
-        response = requests.get(f"{os.getenv('REMOTE_IDENTITY_API_BASE_URL')}/ri?page={page}", headers=headers, params=params)
+        response = requests.get(f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page={page}", headers=headers, params=params)
         if response.status_code == 200:
             remote_identities_page = response.json().get("data", [])
             logger.debug(f"Retrieved {len(remote_identities_page)} remote identities")
             remote_identities.extend(remote_identities_page)
-            if 'links' in response.json() and 'next' in response.json()['links']:
+            if 'links' in response.json() and 'next' in response.json()['links'] and response.json()['links']['next']:
                 page += 1
             else:
                 break
@@ -57,7 +57,7 @@ def get_remote_identity_by_id(
         dict: The remote identity data if found, or an error message otherwise.
     """
     headers = get_auth_headers()
-    response = requests.get(f"{os.getenv('REMOTE_IDENTITY_API_BASE_URL')}/sri/{remote_identity_id}", headers=headers)
+    response = requests.get(f"{REMOTE_IDENTITY_API_BASE_URL}/sri/{remote_identity_id}", headers=headers)
     if response.status_code == 200:
         remote_identity = response.json().get("data", {})
         logger.debug(f"Retrieved remote identity {remote_identity_id}: {remote_identity}")

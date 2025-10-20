@@ -7,6 +7,7 @@ from fastmcp.server.context import Context
 
 logger = get_logger("products")
 
+PRODUCT_API_BASE_URL = os.getenv("PRODUCT_API_BASE_URL", 'https://service.api.openbridge.io/service/products/product')
 
 def get_product_stage_ids(
     product_id: Optional[str],
@@ -23,7 +24,7 @@ def get_product_stage_ids(
     params = {
         "stage_id__gte": 1000,  # Assuming stage IDs start from 1000
     }
-    response = requests.get(f"{os.getenv('PRODUCT_API_BASE_URL')}/{product_id}/payloads", headers=headers, params=params)
+    response = requests.get(f"{PRODUCT_API_BASE_URL}/{product_id}/payloads", headers=headers, params=params)
     if response.status_code == 200:
         product_stage_ids = response.json().get("data", [])
         logger.debug(f"Retrieved product stage IDs for {product_id}: {product_stage_ids}")

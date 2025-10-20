@@ -1,5 +1,0 @@
-mcp:
-  servers:
-    openbridge:
-        command: npx
-        args: ["-y", "--allow-http", "mcp-remote", "http://localhost:8010/mcp"]
