@@ -10,6 +10,7 @@ from fastmcp.server.context import Context
 logger = get_logger("subscriptions")
 SUBSCRIPTIONS_PAGE_SIZE = 1000
 SUBSCRIPTIONS_MAX_PAGES = 10  # Limit to prevent infinite loops in pagination
+SUBSCRIPTIONS_API_BASE_URL = os.getenv("SUBSCRIPTIONS_API_BASE_URL", 'https://subscriptions.api.openbridge.io')
 
 # TODO: This should come from the subscription or product API
 STORAGE_PRODUCT_IDS = {
@@ -52,24 +53,18 @@ def get_subscriptions(
     params = {}
     if status is not None:
         params["status"] = status
-    next_page = 1
-    while next_page:
-        params["page"] = next_page
-        response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/sub?page_size={SUBSCRIPTIONS_PAGE_SIZE}", headers=headers, params=params)
+    next_page_url = f"{SUBSCRIPTIONS_API_BASE_URL}/sub?page=1&page_size={SUBSCRIPTIONS_PAGE_SIZE}"
+    while next_page_url:
+        response = requests.get(next_page_url, headers=headers, params=params)
         if response.status_code == 200:
             subscriptions = response.json().get("data", [])
             # Paginate if necessary
             if response.json().get('links', {}).get('next'):
-                next_page += 1
-                if next_page > SUBSCRIPTIONS_MAX_PAGES:
-                    logger.warning("Reached maximum number of pages for subscriptions.")
-                    break
-                logger.debug(f"Fetching page {next_page} of subscriptions")
-                continue
-                # Continue fetching until no more pages or max pages reached
-            else:
-                logger.debug("No more pages of subscriptions to fetch given the links {}".format(response.json().get('links')))
-                break
+                next_page_url = response.json()['links']['next']
+                if next_page_url:
+                    logger.debug(f"Fetching next page of subscriptions: {next_page_url}")
+                    continue
+            break
         else:
             logger.error(f"Failed to retrieve subscriptions: {response.status_code} - {response.text}")
             return []

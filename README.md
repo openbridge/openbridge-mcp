@@ -47,9 +47,6 @@ MCP_PORT=8010
 
 # Auth
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
-
-# OpenAI key is required for sampling, used in 
-# OPENAI_API_KEY=XXXXX
 ```
 
 ### Client configuration (example)

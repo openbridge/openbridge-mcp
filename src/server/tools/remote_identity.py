@@ -26,19 +26,16 @@ def get_remote_identities(
     headers = get_auth_headers()
     params = {}
     remote_identities = []
-    page = 1
-    while page:
-        if remote_identity_type_id:
-            params['type'] = remote_identity_type_id
-        response = requests.get(f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page={page}", headers=headers, params=params)
+    if remote_identity_type_id:
+        params['type'] = remote_identity_type_id
+    next_page_url = f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page=1"
+    while next_page_url:
+        response = requests.get(next_page_url, headers=headers, params=params)
         if response.status_code == 200:
             remote_identities_page = response.json().get("data", [])
             logger.debug(f"Retrieved {len(remote_identities_page)} remote identities")
             remote_identities.extend(remote_identities_page)
-            if 'links' in response.json() and 'next' in response.json()['links'] and response.json()['links']['next']:
-                page += 1
-            else:
-                break
+            next_page_url = response.json().get('links', {}).get('next', None)
         else:
             logger.warning(f"Failed to retrieve remote identities: {response.status_code}")
             break
