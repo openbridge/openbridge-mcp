@@ -109,15 +109,4 @@ def create_mcp_server() -> FastMCP:
         name='get_product_stage_ids',
         description='Get the stage IDs for a specific product. Returns a list of stage IDs associated with the product.',
     )(products_tools.get_product_stage_ids)
-    # Account Tools
-    # account_openapi = AccountOpenAPI(auth_manager=auth_manager)
-    # # Register all functions from the account_openapi module as tools
-    # for tool_name, tool in account_openapi.tools.items():
-    #     print(f"Registering tool: {tool_name}")
-    #     mcp.add_tool(tool)
-    # subscriptions_openapi = SubscriptionsOpenAPI(auth_manager=auth_manager)
-    # # Register all functions from the subscriptions_openapi module as tools
-    # for tool_name, tool in subscriptions_openapi.tools.items():
-    #     print(f"Registering tool: {tool_name}")
-    #     mcp.add_tool(tool)
     return mcp
