@@ -9,6 +9,8 @@ from fastmcp.server.context import Context
 
 logger = get_logger("jobs")
 
+JOBS_API_BASE_URL = os.getenv('JOBS_API_BASE_URL', 'https://service.api.openbridge.io/service/jobs/production/jobs')
+
 
 def get_jobs(
     subscription_id: int,
@@ -42,7 +44,7 @@ def get_jobs(
 
     try:
         response = requests.get(
-            f"{os.getenv('JOBS_API_BASE_URL')}/jobs",
+            f"{JOBS_API_BASE_URL}/jobs",
             headers=headers,
             params=params
         )

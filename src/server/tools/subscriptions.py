@@ -38,7 +38,6 @@ SPM_REQUIRED_PARAMS = ['dataset_id',]
 
 def get_subscriptions(
     status: str = 'active',
-    only_storages: bool = True,
     ctx: Optional[Context] = None,
 ) -> List[Dict[Any, Any]]:
     """
@@ -46,7 +45,6 @@ def get_subscriptions(
     This function retrieves the subscriptions associated with the user whose token is being used for authentication.
     Args:
         status str: The status to filter subscriptions. If None, retrieves all subscriptions. Valid values are 'active' and 'cancelled'. Default is 'active'.
-        only_storages bool: If True, only returns subscriptions that are storages. Default is True.
     Returns:
         List[Dict[Any, Any]]: A list of subscriptions, each represented as a dictionary in a format following JSON:API spec.
     """
@@ -58,7 +56,6 @@ def get_subscriptions(
     while next_page:
         params["page"] = next_page
         response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/sub?page_size={SUBSCRIPTIONS_PAGE_SIZE}", headers=headers, params=params)
-        print(f"Response from {os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/sub: {response.status_code} - {response.text}")
         if response.status_code == 200:
             subscriptions = response.json().get("data", [])
             # Paginate if necessary
@@ -79,6 +76,33 @@ def get_subscriptions(
     logger.debug(f"Retrieved {len(subscriptions)} subscriptions")
     return subscriptions
 
+def get_subscription_by_id(
+    subscription_id: str,
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Retrieve a specific subscription by its ID.
+    This function retrieves the subscription associated with the given ID.
+    Args:
+        subscription_id (str): The ID of the subscription to retrieve.
+    Returns:
+        Optional[Dict[Any, Any]]: The subscription represented as a dictionary in a format following JSON:API spec, or None if not found.
+    """
+    headers = get_auth_headers()
+    response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/sub/{subscription_id}", headers=headers)
+    if response.status_code == 200:
+        subscription = response.json().get("data", None)
+        if subscription:
+            logger.debug(f"Retrieved subscription {subscription_id}")
+            return subscription
+        else:
+            logger.warning(f"Subscription {subscription_id} not found in response")
+            return None
+    else:
+        logger.error(f"Failed to retrieve subscription {subscription_id}: {response.status_code} - {response.text}")
+        return None
+
+
 def get_storage_subscriptions(
     ctx: Optional[Context] = None,
 ) -> List[Dict[Any, Any]]:
@@ -93,7 +117,6 @@ def get_storage_subscriptions(
     params = {}
     storages = []
     sub_response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/storages?status=active", headers=headers, params=params).json()
-    print(f"Response from {os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/storages: {sub_response} - {sub_response}")
     for sub in sub_response['data']:
         for included in sub_response['included']:
             if str(included['id']) == str(sub['attributes']['storage_group_id']):

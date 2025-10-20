@@ -1,12 +1,17 @@
+import jwt
 import requests
 
 from src.utils.logging import get_logger
 from .base import get_auth_headers
-from .remote_identity import get_remote_identity_by_id
+from .subscriptions import get_subscription_by_id
 from typing import Any, Dict, List, Optional
 import os
 from fastmcp.server.context import Context
 
+HC_BASE_URL = os.getenv(
+    'HEALTHCHECKS_API_BASE_URL', 
+    'https://service.api.openbridge.io/service/healthchecks/production/healthchecks/account'
+)
 logger = get_logger("healthchecks")
 HEALTHCHECKS_PAGE_SIZE = 20
 HEALTHCHECKS_MAX_PAGES = 10  # Limit to prevent infinite loops in pagination
@@ -18,8 +23,9 @@ def get_healthchecks(
     ctx: Optional[Context] = None,
 ) -> List[Dict[Any, Any]]:
     """
-    Get the healthchecks related to the current user.
+    Get the health checks related to the current user.
     This function retrieves the health checks associated with the user whose token is being used for authentication.
+    Only health checks with status 'ERROR' are retrieved.
     Args:
         subscription_id (Optional[str]): The ID of the subscription to filter health checks. If None, retrieves all health checks.
         filter_date (Optional[str]): The date to filter health checks. If None, retrieves all health checks. If provided, must be in 'YYYY-MM-DD' format.
@@ -27,7 +33,14 @@ def get_healthchecks(
         List[Dict[Any, Any]]: A list of health checks with their status.
     """
     headers = get_auth_headers()
-    account_id = 3558  # TODO: Replace with dynamic retrieval of account ID as necessary
+    # Get the account ID from the JWT
+    jwt_token = headers.get("Authorization", "").split(" ")[-1]
+    jwt_payload = jwt.decode(jwt_token, options={"verify_signature": False, "verify_aud": False, "verify_iss": False})
+    account_id = jwt_payload.get("account_id")
+    if not account_id:
+        logger.error("No account_id found in JWT token")
+        return []    
+    
     params = {"status": "ERROR"}
     if subscription_id is not None:
         params["subscription_id"] = subscription_id
@@ -41,7 +54,7 @@ def get_healthchecks(
     healthchecks = []
     while next_page:
         params["page"] = next_page
-        response = requests.get(f"{os.getenv('HEALTHCHECKS_API_BASE_URL')}/{account_id}", headers=headers, params=params)
+        response = requests.get(f"{HC_BASE_URL}/{account_id}", headers=headers, params=params)
         if response.status_code == 200:
             healthchecks = response.json().get("results", [])
             # Paginate if necessary

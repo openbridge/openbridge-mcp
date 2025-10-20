@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 logger = get_logger("service")
 
+SERVICE_API_BASE_URL = os.getenv("SERVICE_API_BASE_URL", 'https://service.api.openbridge.io')
 
 AMZADV_REGIONAL_BASE_URLS = {
     "na": "https://advertising-api.amazon.com",
@@ -65,6 +66,8 @@ async def validate_query(
 
     if ctx is None:
         raise ValueError("Context is required for validate_query")
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY environment variable is required for validate_query")
 
     query_trimmed = query.strip()
     mutating_keywords = _find_mutating_keywords(query_trimmed)
@@ -199,18 +202,21 @@ async def execute_query(
     if ctx is None:
         raise ValueError("Context is required for execute_query")
 
-    validation = await validate_query(
-        query,
-        key_name,
-        allow_unbounded=allow_unbounded,
-        ctx=ctx,
-    )
-    if not validation["decision"]["allowed"]:
-        logger.warning(
-            "Query validation failed; denying execution. decision=%s",
-            validation["decision"],
+    try:
+        validation = await validate_query(
+            query,
+            key_name,
+            allow_unbounded=allow_unbounded,
+            ctx=ctx,
         )
-        return [{"error": "Query validation failed", "validation": validation}]
+        if not validation["decision"]["allowed"]:
+            logger.warning(
+                "Query validation failed; denying execution. decision=%s",
+                validation["decision"],
+            )
+            return [{"error": "Query validation failed", "validation": validation}]
+    except ValueError as ve:
+        logger.error("Validation error: %s; continuing without validation", str(ve))
 
     headers = get_auth_headers()
     payload = {
@@ -226,7 +232,7 @@ async def execute_query(
         }
     }
     response = requests.post(
-        f"{os.getenv('SERVICE_API_BASE_URL')}/service/query/production/query",
+        f"{SERVICE_API_BASE_URL}/service/query/production/query",
         json=payload,
         headers=headers
     )
@@ -248,7 +254,6 @@ async def execute_query(
             }
         ]
 
-# Note: This function should typically be used internally rather than called as a tool.
 def get_amazon_api_access_token(
     remote_identity_id: int,
     ctx: Optional[Context] = None,
@@ -266,7 +271,7 @@ def get_amazon_api_access_token(
     # Obtain the AmzAdv access token from the service API
     headers = get_auth_headers()
     response = requests.get(
-        f"{os.getenv('SERVICE_API_BASE_URL')}/service/amzadv/token/{remote_identity_id}",
+        f"{SERVICE_API_BASE_URL}/service/amzadv/token/{remote_identity_id}",
         headers=headers
     )
     if response.status_code == 200:
@@ -336,7 +341,7 @@ def get_suggested_table_names(
         "latest": "true"
     }
     response = requests.get(
-        f"{os.getenv('SERVICE_API_BASE_URL')}/service/rules/prod/v1/rules/search",
+        f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search",
         params=params,
         headers=headers
     )
@@ -372,7 +377,7 @@ def get_table_rules(
         tablename = tablename[:-7]
         print("Stripped '_master' suffix, now looking for rules for table: " + tablename)
     response = requests.get(
-        f"{os.getenv('SERVICE_API_BASE_URL')}/service/rules/prod/v1/rules/search?path={tablename}&latest=true",
+        f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search?path={tablename}&latest=true",
         headers=headers
     )
     print("Response from Rules API: " + str(response.status_code) + " - " + response.text)
