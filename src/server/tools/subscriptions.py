@@ -108,7 +108,7 @@ def get_storage_subscriptions(
     Returns:
         List[Dict[Any, Any]]: A list of storage subscriptions, each represented as a dictionary in a format following JSON:API spec.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     params = {}
     storages = []
     sub_response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/storages?status=active", headers=headers, params=params).json()

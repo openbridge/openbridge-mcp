@@ -217,6 +217,7 @@ async def execute_query(
             return [{"error": "Query validation failed", "validation": validation}]
     except ValueError as ve:
         logger.error("Validation error: %s; continuing without validation", str(ve))
+        validation = "Skipped due to error"
 
     headers = get_auth_headers(ctx)
     payload = {
@@ -297,7 +298,7 @@ def get_amazon_advertising_profiles(
     """
     # Obtain the remote identity
     remote_identity = get_remote_identity_by_id(remote_identity_id, ctx=ctx)
-    if not remote_identity:
+    if not remote_identity or ('error' in remote_identity):
         logger.warning(f"Remote identity {remote_identity_id} not found. Cannot retrieve advertising profiles.")
         return []
     # Obtain the Amazon Advertising access token
