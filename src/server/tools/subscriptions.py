@@ -54,10 +54,11 @@ def get_subscriptions(
     if status is not None:
         params["status"] = status
     next_page_url = f"{SUBSCRIPTIONS_API_BASE_URL}/sub?page=1&page_size={SUBSCRIPTIONS_PAGE_SIZE}"
+    subscriptions = []
     while next_page_url:
         response = requests.get(next_page_url, headers=headers, params=params)
         if response.status_code == 200:
-            subscriptions = response.json().get("data", [])
+            subscriptions.extend(response.json().get("data", []))
             # Paginate if necessary
             if response.json().get('links', {}).get('next'):
                 next_page_url = response.json()['links']['next']

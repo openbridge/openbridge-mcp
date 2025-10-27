@@ -56,7 +56,9 @@ def get_healthchecks(
         params["page"] = next_page
         response = requests.get(f"{HC_BASE_URL}/{account_id}", headers=headers, params=params)
         if response.status_code == 200:
-            healthchecks = response.json().get("results", [])
+            hcs = response.json().get("results", [])
+            healthchecks.extend(hcs)
+            logger.debug(f"Fetched {len(hcs)} healthchecks from page {next_page}")
             # Paginate if necessary
             if response.json().get('links', {}).get('next'):
                 next_page += 1
