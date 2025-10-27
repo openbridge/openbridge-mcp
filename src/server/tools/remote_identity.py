@@ -33,9 +33,9 @@ def get_remote_identities(
     while next_page_url:
         response = requests.get(next_page_url, params=params, headers=headers)
         if response.status_code == 200:
-            remote_identities_page = response.json().get("data", [])
-            logger.debug(f"Retrieved {len(remote_identities_page)} remote identities")
-            remote_identities.extend(remote_identities_page)
+            ris = response.json().get("data", [])
+            remote_identities.extend(ris)
+            logger.debug(f"Retrieved {len(ris)} remote identities")
             next_page_url = response.json().get('links', {}).get('next', None)
         else:
             logger.warning(f"Failed to retrieve remote identities: {response.status_code}")
