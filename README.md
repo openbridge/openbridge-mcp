@@ -3,6 +3,7 @@
 The *Openbridge MCP Server* is a FastMCP server which enables LLMs to perform various tasks within the Openbridge platform. 
 
 ## Deployment
+Detailed below are setup and configuration instructions for a local machine, but the same steps can be taken to deploy the MCP on a remote server hosted on [AWS Fargate/EC2](https://aws.amazon.com/fargate), [Google Cloud Plaform (GCP)](https://cloud.google.com/blog/topics/developers-practitioners/build-and-deploy-a-remote-mcp-server-to-google-cloud-run-in-under-10-minutes), or any other remote server technology that best fits your environment.
 
 ### Docker deployment
 1. Create a `.env` file at the project root with the variables listed below. The compose file mounts it into the container at `/app/.env`.
@@ -11,7 +12,7 @@ The *Openbridge MCP Server* is a FastMCP server which enables LLMs to perform va
 3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
 4. Connect your MCP client to `http://localhost:8010/mcp` (or the port you chose).
 
-If you prefer raw Docker commands, run `docker build -t openbridge-mcp .` and then start it with `docker run --env-file .env -p 8010:8010 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
+If you prefer raw Docker commands, run `docker buildx -t openbridge-mcp .` and then start it with `docker run --env-file .env -p 8010:8010 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
 
 ### Local deployment
 As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
@@ -62,7 +63,7 @@ Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. B
 For more information about getting connected with Claude Desktop, visit the [**modelcontextprotocol** official documentation](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
 ### Tools exposed
-- Remote identity
+- Remote identity - see [our documentation](https://docs.openbridge.com/en/articles/3673866-understanding-remote-identities) for more information.
   - `get_remote_identities`
     - Lists every remote identity linked to the current token, with an optional `remote_identity_type` filter if you only need one integration.
     - Example LLM request: `List my remote identities`
@@ -78,7 +79,7 @@ For more information about getting connected with Claude Desktop, visit the [**m
     - Executes SQL through the Service API after validation succeeds; override the safeguard with `allow_unbounded=True` only when you intend to run without a `LIMIT`.
     - Example LLM request: `Execute the validated SQL on key merchandising with LIMIT 100`
 
-- Rules
+- Rules - see [our data catalog documentation](https://docs.openbridge.com/en/articles/2247373-data-catalog-how-we-organize-and-manage-data-in-your-data-lake-or-cloud-warehouse) for more information.
   - `get_suggested_table_names`
     - Searches the Rules API (via the Service API) for tables that match the intent of your SQL, returning `_master` suffixed table names plus usage guidance.
     - Example LLM request: `Suggest the best table names for a query about sponsored product spend`
@@ -94,7 +95,7 @@ For more information about getting connected with Claude Desktop, visit the [**m
     - Uses the Amazon token to enumerate available advertising profiles, inferring the region from the remote identity metadata.
     - Example LLM request: `List Amazon Advertising profiles for remote identity 42`
 
-- Healthchecks
+- Healthchecks - see [our documentation about healthchecks](https://docs.openbridge.com/en/articles/6906772-how-to-use-healthchecks) for more information.
   - `get_healthchecks`
     - Lists healthchecks for the current account with optional subscription and date filters, returning pagination info alongside the results.
     - Example LLM request: `List healthchecks for subscription 555 after 2024-01-01`
