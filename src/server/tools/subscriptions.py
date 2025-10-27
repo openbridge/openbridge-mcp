@@ -49,7 +49,7 @@ def get_subscriptions(
     Returns:
         List[Dict[Any, Any]]: A list of subscriptions, each represented as a dictionary in a format following JSON:API spec.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     params = {}
     if status is not None:
         params["status"] = status
@@ -83,7 +83,7 @@ def get_subscription_by_id(
     Returns:
         Optional[Dict[Any, Any]]: The subscription represented as a dictionary in a format following JSON:API spec, or None if not found.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/sub/{subscription_id}", headers=headers)
     if response.status_code == 200:
         subscription = response.json().get("data", None)

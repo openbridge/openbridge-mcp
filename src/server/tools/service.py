@@ -218,7 +218,7 @@ async def execute_query(
     except ValueError as ve:
         logger.error("Validation error: %s; continuing without validation", str(ve))
 
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     payload = {
         "data": {
             "type": "Query",
@@ -269,7 +269,7 @@ def get_amazon_api_access_token(
     """
     # TODO: Validate that the remote identity is the correct type?
     # Obtain the AmzAdv access token from the service API
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     response = requests.get(
         f"{SERVICE_API_BASE_URL}/service/amzadv/token/{remote_identity_id}",
         headers=headers
@@ -335,7 +335,7 @@ def get_suggested_table_names(
     Returns:
         List[str] | str: A list of possible table names found from the query, or an error message if an invalid key is specified.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     params = {
         "path": query,
         "latest": "true"
@@ -371,7 +371,7 @@ def get_table_rules(
     Returns:
         dict: The rules for the table if found, otherwise None.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     # Remove the '_master' suffix if present to match the rule path
     if tablename.endswith('_master'):
         tablename = tablename[:-7]

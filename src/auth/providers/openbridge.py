@@ -37,10 +37,6 @@ class OpenBridgeProvider(BaseAuthProvider):
         :type config: ProviderConfig
         """
         self.refresh_token = config.get("refresh_token")
-        if not self.refresh_token:
-            raise ValueError(
-                "OpenBridge provider requires 'refresh_token' in config"
-            )
 
         self._region = config.get("region", "na")
 

@@ -30,14 +30,14 @@ Required for server and tools to function. Values typically point to your enviro
 - Server
   - `MCP_PORT` (default `8010`): Port for the HTTP MCP server.
 - Authentication
-  - `OPENBRIDGE_REFRESH_TOKEN`: Refresh token or bearer token used to obtain/send Authorization headers.
+  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token or bearer token used to obtain/send Authorization headers. If not provided, authentication will be the responsibility of the MCP client.
 
 Example `.env` template:
 ```bash
-# Server
+# Server settings
 MCP_PORT=8010
 
-# Auth
+# Authentication settings
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
 ```
 
@@ -53,8 +53,13 @@ Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. B
         "-y",
         "--allow-http",
         "mcp-remote@latest",
-        "http://localhost:8010/mcp"
-      ]
+        "http://localhost:8010/mcp",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <YOUR_OB_TOKEN>"
+      }
     }
   }
 }
@@ -115,7 +120,8 @@ For more information about getting connected with Claude Desktop, visit the [**m
 
 ### Notes
 - Authentication
-  - The server will attempt to exchange the `OPENBRIDGE_REFRESH_TOKEN` for a JWT.
+  - If present, the server will attempt to exchange the `OPENBRIDGE_REFRESH_TOKEN` environment variable (or supplied by your `.env` file) for a JWT.
+  - If `OPENBRIDGE_REFRESH_TOKEN` is not set, the MCP client must provide the authentication header as described above.
 - Error handling
   - Tools return empty lists or dictionaries with an `error` key when API calls fail; check responses for errors.
 - Networking

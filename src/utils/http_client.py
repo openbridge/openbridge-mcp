@@ -13,10 +13,10 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
-from ..auth.manager import AuthManager
-from ..config.settings import Settings
-from ..utils.header_resolver import HeaderNameResolver
-from ..utils.media import MediaTypeRegistry
+from src.auth.manager import AuthManager
+from src.config.settings import Settings
+from src.utils.header_resolver import HeaderNameResolver
+from src.utils.media import MediaTypeRegistry
 
 logger = logging.getLogger(__name__)
 

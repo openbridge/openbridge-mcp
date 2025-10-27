@@ -23,14 +23,15 @@ def get_remote_identities(
     Returns:
         List[dict]: A list of remote identities.
     """
-    headers = get_auth_headers()
     params = {}
     remote_identities = []
+    headers = get_auth_headers(ctx)
+
     if remote_identity_type_id:
         params['type'] = remote_identity_type_id
     next_page_url = f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page=1"
     while next_page_url:
-        response = requests.get(next_page_url, headers=headers, params=params)
+        response = requests.get(next_page_url, params=params, headers=headers)
         if response.status_code == 200:
             remote_identities_page = response.json().get("data", [])
             logger.debug(f"Retrieved {len(remote_identities_page)} remote identities")
@@ -53,7 +54,7 @@ def get_remote_identity_by_id(
     Returns:
         dict: The remote identity data if found, or an error message otherwise.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     response = requests.get(f"{REMOTE_IDENTITY_API_BASE_URL}/sri/{remote_identity_id}", headers=headers)
     if response.status_code == 200:
         remote_identity = response.json().get("data", {})

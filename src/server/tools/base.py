@@ -6,7 +6,7 @@ import os
 logger = get_logger("base_tools")
 
 
-def get_auth_headers() -> Dict[str, str]:
+def get_auth_headers(ctx) -> Dict[str, str]:
     """Get authentication headers for API calls.
     
     This function converts refresh tokens to JWT tokens using the exact same
@@ -16,7 +16,12 @@ def get_auth_headers() -> Dict[str, str]:
         Dictionary with Authorization header if authentication is available
     """
     headers = {}
-    
+    if ctx:
+        jwt_token = ctx.get_state("jwt_token")
+        if jwt_token:
+            headers["Authorization"] = f"Bearer {jwt_token}"
+            logger.debug("Using JWT token from context")
+            return headers
     # Check if authentication is enabled
     refresh_token = os.getenv("OPENBRIDGE_REFRESH_TOKEN")
     if not refresh_token:
