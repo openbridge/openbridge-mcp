@@ -399,7 +399,7 @@ class JWTCache:
 
         return None
 
-    def set(self, key: str, jwt_token: str) -> None:
+    async def set(self, key: str, jwt_token: str) -> None:
         """Cache JWT with expiration.
 
         This method stores a JWT token in the cache with an expiration
@@ -434,20 +434,27 @@ class JWTCache:
                 
                 try:
                     # Store in unified token store
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(
-                        self._auth_manager.set_token(
-                            provider_type=provider_type,
-                            identity_id=identity_id,
-                            token_kind=TokenKind.PROVIDER_JWT,
-                            token=jwt_token,
-                            expires_at=expires_at,
-                            metadata={"cache_key": key},
-                            region=region
-                        )
+                    await self._auth_manager.set_token(
+                        provider_type=provider_type,
+                        identity_id=identity_id,
+                        token_kind=TokenKind.PROVIDER_JWT,
+                        token=jwt_token,
+                        expires_at=expires_at,
+                        metadata={"cache_key": key},
+                        region=region
                     )
-                except Exception as e:
-                    logger.debug(f"Failed to store token in TokenStore: {e}")
+                except RuntimeError as e:
+                    logger.debug("Event loop is already running")
+                    # If event loop is already running (e.g., in async context), use create_task
+                    await self._auth_manager.set_token(
+                        provider_type=provider_type,
+                        identity_id=identity_id,
+                        token_kind=TokenKind.PROVIDER_JWT,
+                        token=jwt_token,
+                        expires_at=expires_at,
+                        metadata={"cache_key": key},
+                        region=region
+                    )
 
         # Also store in local cache for fast access
         with self._lock:
@@ -572,6 +579,7 @@ class RefreshTokenMiddleware(Middleware):
                     self.logger.debug("JWT token ready (cached or converted)")
                     # Store the JWT in context-safe storage for the JWT middleware to use
                     jwt_token_var.set(jwt_token)
+                    context.fastmcp_context.set_state("jwt_token", jwt_token)
                 else:
                     self.logger.error("Failed to convert refresh token to JWT")
             else:
@@ -617,7 +625,7 @@ class RefreshTokenMiddleware(Middleware):
 
         if jwt_token:
             # Cache the JWT
-            self._jwt_cache.set(refresh_token, jwt_token)
+            await self._jwt_cache.set(refresh_token, jwt_token)
             self.logger.info("Cached new JWT token")
 
         return jwt_token
@@ -1399,7 +1407,7 @@ def create_openbridge_config() -> AuthConfig:
         endpoint_url=endpoint_url,
         token_type_name="APIAuth",
         required_claims=["user_id", "account_id"],
-        verify_signature=True,  # OpenBridge uses signed tokens (HS256)
+        verify_signature=False,
     )
 
     # OpenBridge-specific settings

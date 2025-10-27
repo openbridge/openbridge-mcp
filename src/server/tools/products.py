@@ -20,7 +20,7 @@ def get_product_stage_ids(
     Returns:
         List[dict]: A list of stage IDs associated with the product, or an error message if the request fails.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     params = {
         "stage_id__gte": 1000,  # Assuming stage IDs start from 1000
     }

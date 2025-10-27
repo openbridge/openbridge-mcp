@@ -32,7 +32,7 @@ def get_jobs(
     Returns:
         List[Dict[Any, Any]]: A list of job dictionaries.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     params = {}
     
     if subscription_id:
@@ -74,7 +74,7 @@ def create_oneoff_jobs(
     Returns:
         Optional[List[Dict[Any, Any]]]: The created job data if successful. If unsuccessful, returns a dict with an "errors" key.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     job_data = []
     for stage_id in stage_ids:
         payload = {

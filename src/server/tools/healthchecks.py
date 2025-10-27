@@ -32,7 +32,7 @@ def get_healthchecks(
     Returns:
         List[Dict[Any, Any]]: A list of health checks with their status.
     """
-    headers = get_auth_headers()
+    headers = get_auth_headers(ctx)
     # Get the account ID from the JWT
     jwt_token = headers.get("Authorization", "").split(" ")[-1]
     jwt_payload = jwt.decode(jwt_token, options={"verify_signature": False, "verify_aud": False, "verify_iss": False})
