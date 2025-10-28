@@ -4,16 +4,16 @@ from fastmcp import FastMCP
 load_dotenv('./.env')
 
 # Imports below must come after load_dotenv() to ensure env vars are loaded
-from src.server.tools import remote_identity as remote_identity_tools
-from src.server.tools import service as service_tools
-from src.server.tools import healthchecks as healthchecks_tools
-from src.server.tools import jobs as jobs_tools
-from src.server.tools import products as products_tools
-from src.server.tools import subscriptions as subscriptions_tools
-from src.utils.logging import get_logger
-from src.auth.authentication import create_auth_middleware, create_openbridge_config
-from src.auth.manager import get_auth_manager
-from src.server.sampling import create_sampling_handler
+from src.server.tools import remote_identity as remote_identity_tools  # noqa: E402
+from src.server.tools import service as service_tools  # noqa: E402
+from src.server.tools import healthchecks as healthchecks_tools  # noqa: E402
+from src.server.tools import jobs as jobs_tools  # noqa: E402
+from src.server.tools import products as products_tools  # noqa: E402
+from src.server.tools import subscriptions as subscriptions_tools  # noqa: E402
+from src.utils.logging import get_logger  # noqa: E402
+from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
+from src.auth.manager import get_auth_manager  # noqa: E402
+from src.server.sampling import create_sampling_handler  # noqa: E402
 
 
 logger = get_logger("mcp_server")
