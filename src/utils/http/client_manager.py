@@ -110,13 +110,13 @@ class HTTPClientManager:
                 return None
             return (t.connect, t.read, t.write, t.pool)
 
-        def limits_key(l: Optional[httpx.Limits]):
-            if not l:
+        def limits_key(limits: Optional[httpx.Limits]):
+            if not limits:
                 return None
             return (
-                l.max_keepalive_connections,
-                l.max_connections,
-                l.keepalive_expiry,
+                limits.max_keepalive_connections,
+                limits.max_connections,
+                limits.keepalive_expiry,
             )
 
         t_key = timeout_key(timeout)

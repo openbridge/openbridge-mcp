@@ -1,6 +1,6 @@
 from .base_models import (
-    AuthCredentials,
-    Identity,
-    Token,
-    OpenbridgeTokenResponse
+    AuthCredentials as AuthCredentials,
+    Identity as Identity,
+    Token as Token,
+    OpenbridgeTokenResponse as OpenbridgeTokenResponse,
 )

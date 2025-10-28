@@ -8,7 +8,7 @@ remote identity service.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 import jwt

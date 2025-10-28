@@ -12,7 +12,7 @@ and can be customized for different failure scenarios.
 import asyncio
 import random
 from functools import wraps
-from typing import Any, Callable, Optional, Tuple, Type, TypeVar
+from typing import Callable, Optional, Tuple, Type, TypeVar
 
 import httpx
 

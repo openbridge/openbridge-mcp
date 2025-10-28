@@ -2,7 +2,6 @@ import httpx
 from fastmcp import FastMCP
 import yaml
 import asyncio
-from src.auth.manager import get_auth_manager
 from src.utils.http import http_client_manager
 from src.utils.http_client import AuthenticatedClient
 
