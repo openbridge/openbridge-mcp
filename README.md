@@ -225,18 +225,45 @@ On every pull request and push to `main`:
 
 **Releases** (`release.yml`)
 
-Automated releases are created when you push a version tag:
+Releases are **automatically created** when you merge to `main`. The workflow uses [Conventional Commits](https://www.conventionalcommits.org/) to determine version bumps and generate changelogs.
+
+**Commit Message Format:**
 
 ```bash
-# Create and push a version tag
-git tag -a v1.0.0 -m "Release version 1.0.0"
-git push origin v1.0.0
+# Patch release (0.1.0 → 0.1.1)
+fix: resolve authentication timeout issue
+fix(auth): handle expired tokens gracefully
+
+# Minor release (0.1.0 → 0.2.0)
+feat: add new subscription management tools
+feat(api): implement rate limiting
+
+# Major release (0.1.0 → 1.0.0)
+feat!: redesign authentication flow
+# or include "BREAKING CHANGE" in commit body
+
+# Other commits (triggers patch release)
+chore: update dependencies
+docs: improve installation guide
 ```
 
-The workflow will:
-1. Build Python packages (wheel and source distribution)
-2. Create a GitHub Release with auto-generated notes
-3. Attach build artifacts to the release
-4. Generate changelog since the previous tag
+**Automatic Release Process:**
 
-You can also manually create releases via GitHub's UI, which will trigger the same build process.
+On every merge to `main`:
+1. Analyze commit messages to determine version bump
+2. Update `pyproject.toml` with new version
+3. Generate categorized changelog (✨ Features, 🐛 Fixes, etc.)
+4. Create GitHub Release with changelog
+5. Build and attach Python packages
+6. (Optional) Publish to PyPI if configured
+
+**Manual Release:**
+
+You can also trigger a release manually via GitHub Actions:
+1. Go to Actions → Release → Run workflow
+2. Select version type (patch/minor/major)
+3. Workflow runs automatically
+
+**Skip Release:**
+
+Include `[skip ci]` in commit message to prevent automatic release.
