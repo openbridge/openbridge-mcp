@@ -37,10 +37,8 @@ Examples:
     >>> print(f"User ID: {claims.get('user_id')}")
 """
 
-import json
 import logging
 import os
-import sys
 import threading
 import time
 from contextvars import ContextVar
@@ -420,7 +418,6 @@ class JWTCache:
         
         # Store in TokenStore if AuthManager is available
         if self._auth_manager and hasattr(self._auth_manager, 'set_token'):
-            import asyncio
             from ..auth.token_store import TokenKind
             
             # Parse key to extract provider and identity info
@@ -443,7 +440,7 @@ class JWTCache:
                         metadata={"cache_key": key},
                         region=region
                     )
-                except RuntimeError as e:
+                except RuntimeError:
                     logger.debug("Event loop is already running")
                     # If event loop is already running (e.g., in async context), use create_task
                     await self._auth_manager.set_token(
@@ -1296,12 +1293,12 @@ def create_auth_middleware(
     # Add refresh token middleware first (converts refresh tokens to JWTs)
     if refresh_token_middleware and config.refresh_token_enabled:
         middleware.append(RefreshTokenMiddleware(config, auth_manager))
-        logger.info(f"Added RefreshTokenMiddleware")
+        logger.info("Added RefreshTokenMiddleware")
 
     # Add JWT authentication middleware (validates JWTs)
     if jwt_middleware and config.jwt_validation_enabled:
         middleware.append(JWTAuthenticationMiddleware(config))
-        logger.info(f"Added JWTAuthenticationMiddleware")
+        logger.info("Added JWTAuthenticationMiddleware")
 
     logger.info(f"Created {len(middleware)} middleware components")
     return middleware
