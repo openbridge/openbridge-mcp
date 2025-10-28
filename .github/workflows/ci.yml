@@ -38,6 +38,7 @@ jobs:
       - name: Run tests
         env:
           AUTH_ENABLED: "false"
+          PYTHONPATH: ${{ github.workspace }}
         run: pytest tests/ -v --junitxml=pytest.xml
 
       - name: Upload test results
