@@ -28,6 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv pip install --system -r requirements.txt -r requirements-dev.txt
+          uv pip install --system -e .
 
       - name: Lint with ruff
         run: ruff check src/ tests/
@@ -36,7 +37,9 @@ jobs:
         run: python -m compileall src tests
 
       - name: Run tests
-        run: PYTHONPATH=$GITHUB_WORKSPACE AUTH_ENABLED=false pytest tests/ -v --junitxml=pytest.xml
+        env:
+          AUTH_ENABLED: "false"
+        run: pytest tests/ -v --junitxml=pytest.xml
 
       - name: Upload test results
         if: always()

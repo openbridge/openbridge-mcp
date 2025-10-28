@@ -12,9 +12,10 @@ setup:  ## Install dependencies in a new virtual environment
 
 install:  ## Install all dependencies (requires active venv)
 	uv pip install -r requirements.txt -r requirements-dev.txt
+	uv pip install -e .
 
 test:  ## Run tests with pytest
-	PYTHONPATH=. AUTH_ENABLED=false pytest tests/ -v
+	AUTH_ENABLED=false pytest tests/ -v
 
 lint:  ## Run linter (ruff) on src and tests
 	ruff check src/ tests/
