@@ -36,10 +36,7 @@ jobs:
         run: python -m compileall src tests
 
       - name: Run tests
-        env:
-          AUTH_ENABLED: "false"
-          PYTHONPATH: ${{ github.workspace }}
-        run: pytest tests/ -v --junitxml=pytest.xml
+        run: PYTHONPATH=$GITHUB_WORKSPACE AUTH_ENABLED=false pytest tests/ -v --junitxml=pytest.xml
 
       - name: Upload test results
         if: always()
