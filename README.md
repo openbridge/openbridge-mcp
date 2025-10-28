@@ -130,4 +130,93 @@ For more information about getting connected with Claude Desktop, visit the [**m
   - The MCP server uses a single `OPENBRIDGE_REFRESH_TOKEN` for all tool calls; downstream access is shared across clients.
   - Deployers must layer their own client authentication (e.g., network isolation, mTLS proxies, signed client configs, or OS-level ACLs) to ensure only trusted agents can invoke the server.
   - Rotate tokens regularly and monitor access logs to detect misuse when multiple operators share the same deployment.
-  - You can also plug FastMCP’s standard authentication providers directly into this server (JWT validation, OAuth proxy, WorkOS AuthKit, etc.) if you prefer first-class per-client auth at the MCP layer; choose the provider that aligns with your org’s identity stack.
+  - You can also plug FastMCP's standard authentication providers directly into this server (JWT validation, OAuth proxy, WorkOS AuthKit, etc.) if you prefer first-class per-client auth at the MCP layer; choose the provider that aligns with your org's identity stack.
+
+## Development
+
+### Setup
+
+Use the provided Makefile for common development tasks. All commands mirror the CI workflow to ensure consistency.
+
+1. **Initial setup** (create virtual environment):
+   ```bash
+   make setup
+   source .venv/bin/activate  # or `. .venv/bin/activate`
+   ```
+
+2. **Install dependencies** (within active venv):
+   ```bash
+   make install
+   ```
+
+### Running Tests
+
+Run the full test suite:
+```bash
+make test
+```
+
+This sets `AUTH_ENABLED=false` and runs pytest with verbose output, matching the CI environment.
+
+### Code Quality
+
+**Lint your code** before committing:
+```bash
+make lint
+```
+
+**Auto-fix linting issues**:
+```bash
+make lint-fix
+```
+
+**Format code**:
+```bash
+make format
+```
+
+**Static syntax check**:
+```bash
+make check
+```
+
+**Run all quality checks** (lint + syntax + tests):
+```bash
+make all
+```
+
+### Starting the Server Locally
+
+```bash
+make serve
+```
+
+This runs `python main.py` with your `.env` configuration.
+
+### Makefile Targets
+
+Run `make help` to see all available targets:
+
+```
+Available targets:
+  setup          Install dependencies in a new virtual environment
+  install        Install all dependencies (requires active venv)
+  test           Run tests with pytest
+  lint           Run linter (ruff) on src and tests
+  lint-fix       Run linter and auto-fix issues
+  format         Format code with ruff
+  check          Run static syntax check
+  serve          Start the MCP server
+  clean          Remove Python cache files and artifacts
+  all            Run all quality checks
+```
+
+### CI/CD
+
+The project uses GitHub Actions for continuous integration. On every pull request and push to `main`/`dev`:
+- Tests run on Python 3.10.15 and 3.12.7
+- Code is linted with ruff
+- Static syntax validation runs via `compileall`
+- Test results are uploaded as artifacts
+
+See `.github/workflows/ci.yml` for the full configuration.

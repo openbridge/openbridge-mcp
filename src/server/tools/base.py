@@ -6,7 +6,7 @@ import os
 logger = get_logger("base_tools")
 
 
-def get_auth_headers(ctx) -> Dict[str, str]:
+def get_auth_headers(ctx=None) -> Dict[str, str]:
     """Get authentication headers for API calls.
     
     This function converts refresh tokens to JWT tokens using the exact same

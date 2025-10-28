@@ -11,12 +11,10 @@ The models provide type safety and validation for:
 - OpenBridge integration
 """
 
-import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 # Auth Models

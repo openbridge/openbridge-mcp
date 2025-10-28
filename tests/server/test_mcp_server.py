@@ -1,13 +1,21 @@
 from src.server import mcp_server
 
 
+class FakeAuthConfig:
+    def __init__(self):
+        self.enabled = False
+
+
 class FakeFastMCP:
-    def __init__(self, *, name, instructions, middleware, sampling_handler):
+    def __init__(self, *, name, instructions, sampling_handler):
         self.name = name
         self.instructions = instructions
-        self.middleware = middleware
+        self.middleware = []
         self.sampling_handler = sampling_handler
         self.registered_tools = {}
+
+    def add_middleware(self, mw):
+        self.middleware.append(mw)
 
     def tool(self, *, name, description):
         def decorator(func):
@@ -20,15 +28,16 @@ class FakeFastMCP:
 def test_create_mcp_server_registers_expected_tools(monkeypatch):
     fake_middleware = object()
     fake_sampling_handler = object()
+    fake_config = FakeAuthConfig()
 
-    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: "config")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
 
     def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        assert config == "config"
+        assert config is fake_config
         assert jwt_middleware is False
         assert auth_manager == "auth-manager"
-        return fake_middleware
+        return [fake_middleware]
 
     monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: fake_sampling_handler)
@@ -37,7 +46,7 @@ def test_create_mcp_server_registers_expected_tools(monkeypatch):
     server = mcp_server.create_mcp_server()
 
     assert isinstance(server, FakeFastMCP)
-    assert server.middleware is fake_middleware
+    assert server.middleware == [fake_middleware]
     assert server.sampling_handler is fake_sampling_handler
 
     expected_tools = {

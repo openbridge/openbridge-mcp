@@ -4,17 +4,12 @@ This module provides an authenticated HTTP client that manages headers
 for Amazon Advertising API calls.
 """
 
-import json
 import logging
-import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 
-from src.auth.manager import AuthManager
-from src.config.settings import Settings
 from src.utils.header_resolver import HeaderNameResolver
 from src.utils.media import MediaTypeRegistry
 

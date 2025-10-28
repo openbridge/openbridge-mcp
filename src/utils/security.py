@@ -14,7 +14,7 @@ import html
 import logging
 import re
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 
 class ValidationError(Exception):
@@ -158,7 +158,7 @@ def sanitize_url(url: str) -> str:
             rf"({param}:)[^/\s]+",
         ]
         for pattern in patterns:
-            url = re.sub(pattern, rf"\1<REDACTED>", url, flags=re.IGNORECASE)
+            url = re.sub(pattern, r"\1<REDACTED>", url, flags=re.IGNORECASE)
     return url
 
 
