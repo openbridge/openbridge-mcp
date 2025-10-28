@@ -213,10 +213,30 @@ Available targets:
 
 ### CI/CD
 
-The project uses GitHub Actions for continuous integration. On every pull request and push to `main`/`dev`:
+The project uses GitHub Actions for continuous integration and releases.
+
+**Continuous Integration** (`ci.yml`)
+
+On every pull request and push to `main`:
 - Tests run on Python 3.10.15 and 3.12.7
 - Code is linted with ruff
 - Static syntax validation runs via `compileall`
 - Test results are uploaded as artifacts
 
-See `.github/workflows/ci.yml` for the full configuration.
+**Releases** (`release.yml`)
+
+Automated releases are created when you push a version tag:
+
+```bash
+# Create and push a version tag
+git tag -a v1.0.0 -m "Release version 1.0.0"
+git push origin v1.0.0
+```
+
+The workflow will:
+1. Build Python packages (wheel and source distribution)
+2. Create a GitHub Release with auto-generated notes
+3. Attach build artifacts to the release
+4. Generate changelog since the previous tag
+
+You can also manually create releases via GitHub's UI, which will trigger the same build process.
