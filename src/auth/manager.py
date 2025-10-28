@@ -15,14 +15,13 @@ The module supports:
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from ..config.settings import Settings
-from ..models import AuthCredentials, Identity, Token
+from ..models import AuthCredentials, Identity
 from .token_store import TokenStore, create_token_store, TokenKey, TokenKind, TokenEntry
 
 # Import providers to trigger registration
-from . import providers  # This imports all providers and registers them
 from .providers.base import BaseAuthProvider, BaseIdentityProvider, ProviderConfig
 from .registry import ProviderRegistry
 

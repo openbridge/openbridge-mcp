@@ -72,7 +72,7 @@ def test_execute_query_returns_data_on_success(monkeypatch):
         return {"decision": {"allowed": True}}
 
     monkeypatch.setattr(service, "validate_query", fake_validate_query)
-    monkeypatch.setattr(service, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
 
     def fake_post(url, json, headers):
@@ -113,7 +113,7 @@ def test_execute_query_short_circuits_on_failed_validation(monkeypatch):
 
 def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
-    monkeypatch.setattr(service, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, params=None, headers=None):
         assert url == "https://service.test/service/rules/prod/v1/rules/search"
@@ -136,7 +136,7 @@ def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
 
 def test_get_table_rules_strips_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
-    monkeypatch.setattr(service, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None):
         assert url == "https://service.test/service/rules/prod/v1/rules/search?path=orders&latest=true"

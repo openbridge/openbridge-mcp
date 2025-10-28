@@ -11,8 +11,7 @@ The module provides:
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from ...models import AuthCredentials, Identity, Token
 

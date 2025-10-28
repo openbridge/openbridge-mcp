@@ -1,7 +1,6 @@
 import httpx
 from fastmcp import FastMCP
 from src.utils.logging import get_logger
-from .base import get_auth_headers
 import asyncio
 import yaml
 import os

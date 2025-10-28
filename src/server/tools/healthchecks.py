@@ -3,7 +3,6 @@ import requests
 
 from src.utils.logging import get_logger
 from .base import get_auth_headers
-from .subscriptions import get_subscription_by_id
 from typing import Any, Dict, List, Optional
 import os
 from fastmcp.server.context import Context
