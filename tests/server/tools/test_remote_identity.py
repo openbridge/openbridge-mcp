@@ -4,7 +4,7 @@ from src.server.tools import remote_identity
 
 
 def test_get_remote_identities_paginates(monkeypatch):
-    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     responses = [
         SimpleNamespace(
@@ -35,7 +35,7 @@ def test_get_remote_identities_paginates(monkeypatch):
 
 
 def test_get_remote_identities_stops_on_failure(monkeypatch):
-    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None, params=None):
         return SimpleNamespace(status_code=500, json=lambda: {})
@@ -48,7 +48,7 @@ def test_get_remote_identities_stops_on_failure(monkeypatch):
 
 
 def test_get_remote_identity_by_id_success(monkeypatch):
-    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None):
         assert url.endswith("/sri/42")
@@ -71,7 +71,7 @@ def test_get_remote_identity_by_id_success(monkeypatch):
 
 
 def test_get_remote_identity_by_id_not_found(monkeypatch):
-    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda: {"Authorization": "token"})
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None):
         return SimpleNamespace(status_code=404, json=lambda: {})
