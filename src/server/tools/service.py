@@ -66,8 +66,11 @@ async def validate_query(
 
     if ctx is None:
         raise ValueError("Context is required for validate_query")
-    if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY environment variable is required for validate_query")
+
+    # Check for either API key, matching sampling handler behavior
+    api_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("Sampling API key required: set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY")
 
     query_trimmed = query.strip()
     mutating_keywords = _find_mutating_keywords(query_trimmed)

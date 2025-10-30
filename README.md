@@ -10,7 +10,7 @@ Detailed below are setup and configuration instructions for a local machine, but
 2. Build and start the stack: `docker compose up --build -d openbridge-mcp`
    - The compose file maps `8010:8010`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
 3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
-4. Connect your MCP client to `http://localhost:8010/mcp` (or the port you chose).
+4. Connect your MCP client to `http://localhost:8000/mcp` (or the port you chose).
 
 If you prefer raw Docker commands, run `docker buildx -t openbridge-mcp .` and then start it with `docker run --env-file .env -p 8010:8010 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
 
@@ -35,7 +35,7 @@ Required for server and tools to function. Values typically point to your enviro
 Example `.env` template:
 ```bash
 # Server settings
-MCP_PORT=8010
+MCP_PORT=8000
 
 # Authentication settings
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
