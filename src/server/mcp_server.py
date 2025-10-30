@@ -1,5 +1,7 @@
+import os
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
 load_dotenv('./.env')
 
@@ -53,14 +55,19 @@ def create_mcp_server() -> FastMCP:
         description='Retrieve a specific remote identity by its ID. Returns remote identity details if found.',
     )(remote_identity_tools.get_remote_identity_by_id)
     # Service Tools
-    mcp.tool(
-        name='validate_query',
-        description='Analyze SQL with sampling, requiring a LIMIT unless allow_unbounded=True.',
-    )(service_tools.validate_query)
-    mcp.tool(
-        name='execute_query',
-        description='Validate then execute a SQL query; defaults to requiring LIMIT unless allow_unbounded=True.',
-    )(service_tools.execute_query)
+    # Query validation tools require an API key for LLM sampling
+    has_sampling_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if has_sampling_key:
+        mcp.tool(
+            name='validate_query',
+            description='Analyze SQL with sampling, requiring a LIMIT unless allow_unbounded=True.',
+        )(service_tools.validate_query)
+        mcp.tool(
+            name='execute_query',
+            description='Validate then execute a SQL query; defaults to requiring LIMIT unless allow_unbounded=True.',
+        )(service_tools.execute_query)
+    else:
+        logger.info("Skipping query validation tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
     mcp.tool(
         name='get_amazon_api_access_token',
         description='Get the Amazon API access token for a given remote identity ID. Returns the access token if available.',
@@ -112,4 +119,15 @@ def create_mcp_server() -> FastMCP:
         name='get_product_stage_ids',
         description='Get the stage IDs for a specific product. Returns a list of stage IDs associated with the product.',
     )(products_tools.get_product_stage_ids)
+
+    # Health check endpoint for monitoring and load balancers
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_check(request):
+        """Health check endpoint for monitoring, load balancers, and deployment platforms."""
+        return JSONResponse({
+            "status": "healthy",
+            "service": "openbridge-mcp",
+            "version": "1.0.0"
+        })
+
     return mcp
