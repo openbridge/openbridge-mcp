@@ -1,17 +1,15 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = [ "setuptools>=45", "wheel",]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbridge-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "FastMCP server for Openbridge API integration"
 requires-python = ">=3.10"
 readme = "README.md"
-
-# Dependencies are managed via requirements.txt
 dependencies = []
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
+where = [ ".",]
+include = [ "src*",]
