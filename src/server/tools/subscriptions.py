@@ -112,7 +112,7 @@ def get_storage_subscriptions(
     headers = get_auth_headers(ctx)
     params = {}
     storages = []
-    sub_response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/storages?status=active", headers=headers, params=params).json()
+    sub_response = requests.get(f"{SUBSCRIPTIONS_API_BASE_URL}/storages?status=active", headers=headers, params=params).json()
     for sub in sub_response['data']:
         for included in sub_response['included']:
             if str(included['id']) == str(sub['attributes']['storage_group_id']):
@@ -124,7 +124,7 @@ def get_storage_subscriptions(
     # Get SPM for each storage
     response = []
     for storage in storages:
-        url = os.getenv("SUBSCRIPTIONS_API_BASE_URL") + f'/spm?subscription={storage["subscription_id"]}'
+        url = f"{SUBSCRIPTIONS_API_BASE_URL}/spm?subscription={storage['subscription_id']}"
         spm_resp = requests.get(url, headers=headers)
         spm_resp.raise_for_status()
         storage_spm = {x['attributes']['data_key']: x['attributes']['data_value'] for x in spm_resp.json()['data'] if x['attributes']['data_key'] in SPM_REQUIRED_PARAMS}
