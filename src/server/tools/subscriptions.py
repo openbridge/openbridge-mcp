@@ -1,10 +1,11 @@
+import os
+from typing import Any, Dict, List, Optional
+
 import requests
+from fastmcp.server.context import Context
 
 from src.utils.logging import get_logger
-from .base import get_auth_headers
-from typing import Any, Dict, List, Optional
-import os
-from fastmcp.server.context import Context
+from .base import get_api_timeout, get_auth_headers, safe_pagination_url
 
 logger = get_logger("subscriptions")
 SUBSCRIPTIONS_PAGE_SIZE = 1000
@@ -55,12 +56,20 @@ def get_subscriptions(
     next_page_url = f"{SUBSCRIPTIONS_API_BASE_URL}/sub?page=1&page_size={SUBSCRIPTIONS_PAGE_SIZE}"
     subscriptions = []
     while next_page_url:
-        response = requests.get(next_page_url, headers=headers, params=params)
+        response = requests.get(
+            next_page_url,
+            headers=headers,
+            params=params,
+            timeout=get_api_timeout(),
+        )
         if response.status_code == 200:
             subscriptions.extend(response.json().get("data", []))
             # Paginate if necessary
-            if response.json().get('links', {}).get('next'):
-                next_page_url = response.json()['links']['next']
+            next_page_url = safe_pagination_url(
+                response.json().get('links', {}).get('next'),
+                SUBSCRIPTIONS_API_BASE_URL,
+            )
+            if next_page_url:
                 if next_page_url:
                     logger.debug(f"Fetching next page of subscriptions: {next_page_url}")
                     continue
@@ -84,7 +93,11 @@ def get_subscription_by_id(
         Optional[Dict[Any, Any]]: The subscription represented as a dictionary in a format following JSON:API spec, or None if not found.
     """
     headers = get_auth_headers(ctx)
-    response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/sub/{subscription_id}", headers=headers)
+    response = requests.get(
+        f"{SUBSCRIPTIONS_API_BASE_URL}/sub/{subscription_id}",
+        headers=headers,
+        timeout=get_api_timeout(),
+    )
     if response.status_code == 200:
         subscription = response.json().get("data", None)
         if subscription:
@@ -111,7 +124,12 @@ def get_storage_subscriptions(
     headers = get_auth_headers(ctx)
     params = {}
     storages = []
-    sub_response = requests.get(f"{os.getenv('SUBSCRIPTIONS_API_BASE_URL')}/storages?status=active", headers=headers, params=params).json()
+    sub_response = requests.get(
+        f"{SUBSCRIPTIONS_API_BASE_URL}/storages?status=active",
+        headers=headers,
+        params=params,
+        timeout=get_api_timeout(),
+    ).json()
     for sub in sub_response['data']:
         for included in sub_response['included']:
             if str(included['id']) == str(sub['attributes']['storage_group_id']):
@@ -123,8 +141,8 @@ def get_storage_subscriptions(
     # Get SPM for each storage
     response = []
     for storage in storages:
-        url = os.getenv("SUBSCRIPTIONS_API_BASE_URL") + f'/spm?subscription={storage["subscription_id"]}'
-        spm_resp = requests.get(url, headers=headers)
+        url = f'{SUBSCRIPTIONS_API_BASE_URL}/spm?subscription={storage["subscription_id"]}'
+        spm_resp = requests.get(url, headers=headers, timeout=get_api_timeout())
         spm_resp.raise_for_status()
         storage_spm = {x['attributes']['data_key']: x['attributes']['data_value'] for x in spm_resp.json()['data'] if x['attributes']['data_key'] in SPM_REQUIRED_PARAMS}
         storage_type = STORAGE_TYPE_MAPPING.get(spm_resp.json()['data'][0]['attributes']['product']['name'], 'unknown')

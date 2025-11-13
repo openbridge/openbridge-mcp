@@ -6,7 +6,7 @@ help:  ## Show this help message
 
 setup:  ## Install dependencies in a new virtual environment
 	pip install uv
-	uv venv --python 3.12
+	uv venv --python 3.13
 	@echo "Run 'source .venv/bin/activate' to activate the virtual environment"
 	@echo "Then run 'make install' to install dependencies"
 

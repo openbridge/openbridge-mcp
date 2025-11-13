@@ -1,11 +1,12 @@
+import os
+from datetime import datetime as dt, timedelta as td
+from typing import Any, Dict, List, Optional
+
 import requests
+from fastmcp.server.context import Context
 
 from src.utils.logging import get_logger
-from .base import get_auth_headers
-from typing import Any, Dict, List, Optional
-from datetime import datetime as dt, timedelta as td
-import os
-from fastmcp.server.context import Context
+from .base import get_api_timeout, get_auth_headers
 
 logger = get_logger("jobs")
 
@@ -46,7 +47,8 @@ def get_jobs(
         response = requests.get(
             f"{JOBS_API_BASE_URL}/jobs",
             headers=headers,
-            params=params
+            params=params,
+            timeout=get_api_timeout(),
         )
         response.raise_for_status()
         return response.json().get('data', [])
@@ -94,7 +96,8 @@ def create_oneoff_jobs(
             response = requests.post(
                 f"{os.getenv('HISTORY_API_BASE_URL')}/history/{subscription_id}",
                 headers=headers,
-                json=payload
+                json=payload,
+                timeout=get_api_timeout(),
             )
             response.raise_for_status()
             job_data.append(response.json().get('data', {}).get('attributes', {}))

@@ -8,11 +8,11 @@ Detailed below are setup and configuration instructions for a local machine, but
 ### Docker deployment
 1. Create a `.env` file at the project root with the variables listed below. The compose file mounts it into the container at `/app/.env`.
 2. Build and start the stack: `docker compose up --build -d openbridge-mcp`
-   - The compose file maps `8010:8010`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
+   - The compose file maps `8000:8000`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
 3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
-4. Connect your MCP client to `http://localhost:8000/mcp` (or the port you chose).
+4. Connect your MCP client to your server. If you did this locally, the address would look like: `http://localhost:8000/mcp` (or the port you chose). Running this on a remote server on Cloudflare, the URL would look like `https://mcp-openbridge-mcp.6fdec1c7650b77137a09f6fa4f2c9ca8.workers.dev`.
 
-If you prefer raw Docker commands, run `docker buildx -t openbridge-mcp .` and then start it with `docker run --env-file .env -p 8010:8010 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
+If you need as Intel/AMD compatable environment, you can build for both like this: `docker buildx build --platform linux/amd64,linux/arm64 -t openbridgeops/openbridge-mcp:latest .` and then start it with `docker run --env-file .env -p 8000:8000 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
 
 ### Local deployment
 As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
@@ -30,11 +30,13 @@ Required for server and tools to function. Values typically point to your enviro
 - Server
   - `MCP_PORT` (default `8010`): Port for the HTTP MCP server.
 - Authentication
-  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token or bearer token used to obtain/send Authorization headers. If not provided, authentication will be the responsibility of the MCP client.
+  - `OPENBRIDGE_REFRESH_TOKEN` (required for protected tools): Refresh token used to obtain service JWTs. When unset the server skips authentication and downstream API calls will fail with `401`.
+  - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
 - Query Validation (AI-powered)
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools use AI-powered sampling to validate SQL queries and ensure they follow best practices (read-only operations, proper LIMIT clauses, etc.). Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint for query validation.
+  - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Explicitly opt in to sending SQL text to the configured OpenAI-compatible endpoint for validation. When disabled the server uses heuristics only.
 
 Example `.env` template:
 ```bash
@@ -43,6 +45,10 @@ MCP_PORT=8000
 
 # Authentication settings
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
+# Optional timeout in seconds (connect timeout fixed at 10s)
+OPENBRIDGE_API_TIMEOUT=45
+# Opt-in to AI validation; by default only heuristics run and no SQL leaves your environment
+OPENBRIDGE_ENABLE_LLM_VALIDATION=false
 
 # Query validation (AI-powered) - required for validate_query and execute_query tools
 FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
@@ -62,7 +68,7 @@ Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. B
         "-y",
         "--allow-http",
         "mcp-remote@latest",
-        "http://localhost:8010/mcp",
+        "http://localhost:8000/mcp",
         "--header",
         "Authorization:${AUTH_HEADER}"
       ],
