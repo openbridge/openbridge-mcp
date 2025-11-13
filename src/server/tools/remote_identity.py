@@ -1,9 +1,11 @@
-from src.utils.logging import get_logger
-from .base import get_auth_headers
-from typing import List, Optional
-import requests
 import os
+from typing import List, Optional
+
+import requests
 from fastmcp.server.context import Context
+
+from src.utils.logging import get_logger
+from .base import get_api_timeout, get_auth_headers, safe_pagination_url
 
 logger = get_logger("remote_identities")
 
@@ -31,12 +33,20 @@ def get_remote_identities(
         params['type'] = remote_identity_type_id
     next_page_url = f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page=1"
     while next_page_url:
-        response = requests.get(next_page_url, params=params, headers=headers)
+        response = requests.get(
+            next_page_url,
+            params=params,
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
         if response.status_code == 200:
             ris = response.json().get("data", [])
             remote_identities.extend(ris)
             logger.debug(f"Retrieved {len(ris)} remote identities")
-            next_page_url = response.json().get('links', {}).get('next', None)
+            next_page_url = safe_pagination_url(
+                response.json().get('links', {}).get('next', None),
+                REMOTE_IDENTITY_API_BASE_URL,
+            )
         else:
             logger.warning(f"Failed to retrieve remote identities: {response.status_code}")
             break
@@ -55,7 +65,11 @@ def get_remote_identity_by_id(
         dict: The remote identity data if found, or an error message otherwise.
     """
     headers = get_auth_headers(ctx)
-    response = requests.get(f"{REMOTE_IDENTITY_API_BASE_URL}/sri/{remote_identity_id}", headers=headers)
+    response = requests.get(
+        f"{REMOTE_IDENTITY_API_BASE_URL}/sri/{remote_identity_id}",
+        headers=headers,
+        timeout=get_api_timeout(),
+    )
     if response.status_code == 200:
         remote_identity = response.json().get("data", {})
         logger.debug(f"Retrieved remote identity {remote_identity_id}: {remote_identity}")

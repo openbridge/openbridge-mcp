@@ -82,20 +82,6 @@ class Settings(BaseSettings):
         description="Amazon Ads Profile ID (for direct auth)",
     )
 
-    # Legacy field names for backward compatibility
-    amazon_ads_client_id: Optional[str] = Field(
-        None,
-        description="Amazon Ads API Client ID (deprecated, use AMAZON_AD_API_CLIENT_ID)",
-    )
-    amazon_ads_client_secret: Optional[str] = Field(
-        None,
-        description="Amazon Ads API Client Secret (deprecated, use AMAZON_AD_API_CLIENT_SECRET)",
-    )
-    amazon_ads_refresh_token: Optional[str] = Field(
-        None,
-        description="Amazon Ads API Refresh Token (deprecated, use AMAZON_AD_API_REFRESH_TOKEN)",
-    )
-
     # Openbridge Configuration
     openbridge_refresh_token: Optional[str] = Field(
         None, description="Openbridge Refresh Token (format: key:secret)"

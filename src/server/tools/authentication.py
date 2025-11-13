@@ -23,7 +23,7 @@ os.environ["FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER"] = "true"
 
 # Create middleware stack
 auth_cfg = create_openbridge_config()
-auth_manager = get_auth_manager(auth_cfg)
+auth_manager = get_auth_manager()
 middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
 
 # Create the MCP server

@@ -1,15 +1,14 @@
 import json
 import re
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import requests
+from fastmcp.server.context import Context
 
 from src.utils.logging import get_logger
-from .base import get_auth_headers
+from .base import get_api_timeout, get_auth_headers
 from .remote_identity import get_remote_identity_by_id
 import os
-from fastmcp.server.context import Context
-from typing import Dict, List, Optional
 
 logger = get_logger("service")
 
@@ -105,44 +104,49 @@ async def validate_query(
     if not key_name:
         heuristics["warnings"].append("No key_name provided.")
 
-    sampling_feedback: Dict[str, Any] = {"supported": True, "details": None}
-    sampling_allows = True
+    enable_llm = os.getenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "false").lower() == "true"
 
-    system_prompt = (
-        "You evaluate SQL queries for a read-only analytics service. "
-        "Return JSON with: read_only (bool), risk_level (low|medium|high), "
-        "issues (list of strings), recommendations (list of strings), "
-        "and allow (bool) indicating whether to proceed."
-    )
-    user_prompt = (
-        "Account mapping key: {key}\nSQL Query:\n{query}".format(
-            key=key_name or "<missing>", query=query_trimmed
-        )
-    )
+    sampling_feedback: Dict[str, Any] = {"supported": False, "details": None}
+    sampling_allows = heuristics["read_only"]
 
-    try:
-        response = await ctx.sample(
-            messages=[user_prompt],
-            system_prompt=system_prompt,
-            temperature=0,
-            max_tokens=400,
+    if enable_llm:
+        logger.warning("Sending SQL to OpenAI for validation (see SECURITY.md)")
+        system_prompt = (
+            "You evaluate SQL queries for a read-only analytics service. "
+            "Return JSON with: read_only (bool), risk_level (low|medium|high), "
+            "issues (list of strings), recommendations (list of strings), "
+            "and allow (bool) indicating whether to proceed."
         )
-        raw_text = response.text.strip()
-        sampling_feedback["raw"] = raw_text
-        try:
-            parsed = json.loads(raw_text)
-            sampling_feedback["details"] = parsed
-            sampling_allows = bool(parsed.get("allow", True)) and bool(
-                parsed.get("read_only", True)
+        user_prompt = (
+            "Account mapping key: {key}\nSQL Query:\n{query}".format(
+                key=key_name or "<missing>", query=query_trimmed
             )
-        except json.JSONDecodeError:
-            sampling_feedback["supported"] = False
-            sampling_feedback["error"] = "Sampling response was not valid JSON."
-            sampling_allows = False
-    except Exception as exc:  # pragma: no cover - runtime safeguard
-        sampling_feedback["supported"] = False
-        sampling_feedback["error"] = str(exc)
-        sampling_allows = heuristics["read_only"]
+        )
+
+        try:
+            response = await ctx.sample(
+                messages=[user_prompt],
+                system_prompt=system_prompt,
+                temperature=0,
+                max_tokens=400,
+            )
+            raw_text = response.text.strip()
+            sampling_feedback["raw"] = raw_text
+            try:
+                parsed = json.loads(raw_text)
+                sampling_feedback["details"] = parsed
+                sampling_feedback["supported"] = True
+                sampling_allows = bool(parsed.get("allow", True)) and bool(
+                    parsed.get("read_only", True)
+                )
+            except json.JSONDecodeError:
+                sampling_feedback["error"] = "Sampling response was not valid JSON."
+                sampling_allows = False
+        except Exception as exc:  # pragma: no cover - runtime safeguard
+            sampling_feedback["error"] = str(exc)
+            sampling_allows = heuristics["read_only"]
+    else:
+        logger.debug("LLM validation disabled; using heuristics only")
 
     limit_ok = has_limit or allow_unbounded
 
@@ -238,7 +242,8 @@ async def execute_query(
     response = requests.post(
         f"{SERVICE_API_BASE_URL}/service/query/production/query",
         json=payload,
-        headers=headers
+        headers=headers,
+        timeout=get_api_timeout(),
     )
     if response.status_code == 200:
         data = response.json().get("data", [])
@@ -276,12 +281,18 @@ def get_amazon_api_access_token(
     headers = get_auth_headers(ctx)
     response = requests.get(
         f"{SERVICE_API_BASE_URL}/service/amzadv/token/{remote_identity_id}",
-        headers=headers
+        headers=headers,
+        timeout=get_api_timeout(),
     )
     if response.status_code == 200:
         access_token = response.json().get("data", {}).get('access_token')
         client_id = response.json().get("data", {}).get('client_id')
-        logger.debug(f"Retrieved Amazon API access token for remote identity {remote_identity_id}: {access_token}")
+        token_length = len(access_token) if access_token else 0
+        logger.debug(
+            "Retrieved Amazon API access token for remote identity %s (length: %d)",
+            remote_identity_id,
+            token_length,
+        )
     else:
         logger.warning(f"Failed to retrieve Amazon API access token for remote identity {remote_identity_id}: {response.status_code}")
         return str(response.json())
@@ -316,7 +327,8 @@ def get_amazon_advertising_profiles(
     }
     response = requests.get(
         f"{AMZADV_REGIONAL_BASE_URLS[remote_identity['region']]}/v2/profiles",
-        headers=headers
+        headers=headers,
+        timeout=get_api_timeout(),
     )
     if response.status_code == 200:
         profiles = response.json()
@@ -347,7 +359,8 @@ def get_suggested_table_names(
     response = requests.get(
         f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search",
         params=params,
-        headers=headers
+        headers=headers,
+        timeout=get_api_timeout(),
     )
     # Extract table names from the response
     table_names = []
@@ -381,7 +394,8 @@ def get_table_rules(
         tablename = tablename[:-7]
     response = requests.get(
         f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search?path={tablename}&latest=true",
-        headers=headers
+        headers=headers,
+        timeout=get_api_timeout(),
     )
     if response.status_code == 200:
         rules = response.json().get("data", [])

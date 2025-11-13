@@ -1,9 +1,11 @@
-from src.utils.logging import get_logger
-from .base import get_auth_headers
-from typing import List, Optional
-import requests
 import os
+from typing import List, Optional
+
+import requests
 from fastmcp.server.context import Context
+
+from src.utils.logging import get_logger
+from .base import get_api_timeout, get_auth_headers
 
 logger = get_logger("products")
 
@@ -24,7 +26,12 @@ def get_product_stage_ids(
     params = {
         "stage_id__gte": 1000,  # Assuming stage IDs start from 1000
     }
-    response = requests.get(f"{PRODUCT_API_BASE_URL}/{product_id}/payloads", headers=headers, params=params)
+    response = requests.get(
+        f"{PRODUCT_API_BASE_URL}/{product_id}/payloads",
+        headers=headers,
+        params=params,
+        timeout=get_api_timeout(),
+    )
     if response.status_code == 200:
         product_stage_ids = response.json().get("data", [])
         logger.debug(f"Retrieved product stage IDs for {product_id}: {product_stage_ids}")

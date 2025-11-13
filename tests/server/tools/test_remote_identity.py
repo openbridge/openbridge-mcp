@@ -11,7 +11,7 @@ def test_get_remote_identities_paginates(monkeypatch):
             status_code=200,
             json=lambda: {
                 "data": [{"id": "ri-1"}],
-                "links": {"next": "https://api.example.com/ri?page=2"},
+                "links": {"next": "https://remote-identity.api.openbridge.io/ri?page=2"},
             },
         ),
         SimpleNamespace(
@@ -23,7 +23,7 @@ def test_get_remote_identities_paginates(monkeypatch):
         ),
     ]
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, timeout=None):
         assert headers == {"Authorization": "token"}
         return responses.pop(0)
 
@@ -37,7 +37,7 @@ def test_get_remote_identities_paginates(monkeypatch):
 def test_get_remote_identities_stops_on_failure(monkeypatch):
     monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, params=None):
+    def fake_get(url, headers=None, params=None, timeout=None):
         return SimpleNamespace(status_code=500, json=lambda: {})
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
@@ -50,7 +50,7 @@ def test_get_remote_identities_stops_on_failure(monkeypatch):
 def test_get_remote_identity_by_id_success(monkeypatch):
     monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, timeout=None):
         assert url.endswith("/sri/42")
         return SimpleNamespace(
             status_code=200,
@@ -73,7 +73,7 @@ def test_get_remote_identity_by_id_success(monkeypatch):
 def test_get_remote_identity_by_id_not_found(monkeypatch):
     monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, timeout=None):
         return SimpleNamespace(status_code=404, json=lambda: {})
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
