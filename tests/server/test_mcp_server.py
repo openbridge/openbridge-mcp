@@ -68,7 +68,7 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
         "execute_query",
         "get_amazon_api_access_token",
         "get_amazon_advertising_profiles",
-        "get_table_rules",
+        "get_table_schema",
         "get_suggested_table_names",
         "get_healthchecks",
         "get_jobs",
@@ -110,7 +110,7 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
         # validate_query and execute_query should be MISSING
         "get_amazon_api_access_token",
         "get_amazon_advertising_profiles",
-        "get_table_rules",
+        "get_table_schema",
         "get_suggested_table_names",
         "get_healthchecks",
         "get_jobs",

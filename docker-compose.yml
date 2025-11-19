@@ -1,7 +1,7 @@
-version: "3.8"
+
 services:
   openbridge-mcp:
-    build: .
+    image: openbridgeops/openbridge-mcp:latest
     ports:
       - "8000:8000"
     volumes:

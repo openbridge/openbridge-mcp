@@ -12,6 +12,24 @@ from .simple import OpenbridgeAuth, get_auth
 
 logger = logging.getLogger(__name__)
 
+JWT_CONTEXT_ATTR = "_openbridge_jwt"
+JWT_PUBLIC_ATTR = "jwt_token"
+
+
+def _set_context_state(ctx, key: str, value: str) -> None:
+    """Best-effort state setter compatible with older FastMCP releases."""
+    if not ctx:
+        return
+
+    setter = getattr(ctx, "set_state", None)
+    if callable(setter):
+        try:
+            setter(key, value)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Context set_state unavailable, falling back to attrs")
+
+    setattr(ctx, key, value)
+
 
 @dataclass
 class AuthConfig:
@@ -39,8 +57,8 @@ class OpenbridgeAuthMiddleware(Middleware):
         try:
             jwt_token = self._auth.get_jwt()
             # Share with downstream tooling via both context layers.
-            context.fastmcp_context.set_state("jwt_token", jwt_token)
-            context.set_state("jwt_token", jwt_token)
+            _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
+            _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("Failed to prime Openbridge JWT: %s", exc)
 
@@ -72,4 +90,6 @@ __all__: Iterable[str] = [
     "OpenbridgeAuthMiddleware",
     "create_auth_middleware",
     "create_openbridge_config",
+    "JWT_CONTEXT_ATTR",
+    "JWT_PUBLIC_ATTR",
 ]
