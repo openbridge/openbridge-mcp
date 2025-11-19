@@ -19,7 +19,7 @@ def main():
         # Load environment variables
         env_path = '.env'
         load_dotenv(env_path)
-        MCP_PORT = int(os.getenv('MCP_PORT', 8010))
+        MCP_PORT = int(os.getenv('MCP_PORT', 8000))
 
         # Create and run MCP server
         server = create_mcp_server()
