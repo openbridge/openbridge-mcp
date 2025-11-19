@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Dict, Optional
 from urllib.parse import urljoin, urlparse
 
-import requests
-
 from src.auth.simple import AuthenticationError, get_api_timeout, get_auth
 from src.utils.logging import get_logger
 from src.utils.security import ValidationError, validate_url
