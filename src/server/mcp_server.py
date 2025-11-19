@@ -77,8 +77,8 @@ def create_mcp_server() -> FastMCP:
         description='List the Amazon Advertising profiles for a given remote identity ID. Returns a list of profiles.',
     )(service_tools.get_amazon_advertising_profiles)
     mcp.tool(
-        name='get_table_schemas',
-        description='Get the schemas for a given table name from the rules API. Returns the schema if found.',
+        name='get_table_schema',
+        description='Get the schema for a given table name from the rules API. Returns the schema if found.',
     )(service_tools.get_table_schema)
     mcp.tool(
         name='get_suggested_table_names',
