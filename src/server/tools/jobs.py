@@ -57,7 +57,7 @@ def get_jobs(
         return []
 
 
-def create_oneoff_jobs(
+def create_job(
     subscription_id: int,
     date_start: str,
     date_end: str,
@@ -65,7 +65,7 @@ def create_oneoff_jobs(
     ctx: Optional[Context] = None,
 ) -> List[Dict[Any, Any]]:
     """
-    Creates history (one-off) jobs for a given subscription.
+    Create a job for a given subscription.
 
     Args:
         subscription_id (int): The subscription ID to create jobs for.

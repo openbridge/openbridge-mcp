@@ -376,7 +376,7 @@ def get_suggested_table_names(
         return []
 
 
-def get_table_rules(
+def get_table_schema(
     tablename: str,
     ctx: Optional[Context] = None,
 ) -> Optional[dict]:

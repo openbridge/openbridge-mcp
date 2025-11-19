@@ -67,7 +67,7 @@ def create_mcp_server() -> FastMCP:
             description='Validate then execute a SQL query; defaults to requiring LIMIT unless allow_unbounded=True.',
         )(service_tools.execute_query)
     else:
-        logger.info("Skipping query validation tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
+        logger.info("Skipping SQL query tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
     mcp.tool(
         name='get_amazon_api_access_token',
         description='Get the Amazon API access token for a given remote identity ID. Returns the access token if available.',
@@ -77,9 +77,9 @@ def create_mcp_server() -> FastMCP:
         description='List the Amazon Advertising profiles for a given remote identity ID. Returns a list of profiles.',
     )(service_tools.get_amazon_advertising_profiles)
     mcp.tool(
-        name='get_table_rules',
-        description='Get the rules for a given table name from the rules API. Returns the rules if found.',
-    )(service_tools.get_table_rules)
+        name='get_table_schema',
+        description='Get the schema for a given table name from the rules API. Returns the schema if found.',
+    )(service_tools.get_table_schema)
     mcp.tool(
         name='get_suggested_table_names',
         description="""
@@ -102,9 +102,9 @@ def create_mcp_server() -> FastMCP:
         description='Fetch jobs from the Openbridge API.',
     )(jobs_tools.get_jobs)
     mcp.tool(
-        name='create_oneoff_jobs',
-        description='Create one-off jobs for a given subscription.',
-    )(jobs_tools.create_oneoff_jobs)
+        name='create_job',
+        description='Create a job for a given subscription.',
+    )(jobs_tools.create_job)
     # Subscriptions tools
     mcp.tool(
         name='get_subscriptions',
