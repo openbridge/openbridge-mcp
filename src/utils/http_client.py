@@ -33,8 +33,8 @@ class AuthenticatedClient(httpx.AsyncClient):
         - Injects correct Openbridge authentication headers
         - Supports profile-specific header rules
 
-    :param auth_manager: Authentication manager for header generation
-    :type auth_manager: Optional[AuthManager]
+    :param auth_manager: Authentication helper for header generation
+    :type auth_manager: Optional[object]
     :param media_registry: Registry for content type negotiation
     :type media_registry: Optional[MediaTypeRegistry]
     :param header_resolver: Resolver for header name variations
