@@ -16,7 +16,7 @@
 ## Build, Test, and Development Commands
 - `python -m venv .venv && source .venv/bin/activate` prepares an isolated Python 3.10+ workspace.
 - `pip install fastmcp python-dotenv requests pydantic` reinstalls the runtime dependencies used across `src/`.
-- `MCP_PORT=8010 python main.py` runs the HTTP server on `0.0.0.0`; match the port with your client configuration.
+- `MCP_PORT=8000 python main.py` runs the HTTP server on `0.0.0.0`; match the port with your client configuration.
 - `pytest` (once the `tests/` tree exists) exercises the suite; target subsets via `pytest tests/server/test_service.py -k execute_query`.
 
 ## Coding Style & Naming Conventions

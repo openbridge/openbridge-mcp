@@ -137,7 +137,7 @@ def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
     assert names == ["product_master", "order_master"]
 
 
-def test_get_table_rules_strips_master_suffix(monkeypatch):
+def test_get_table_schema_strips_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -154,6 +154,6 @@ def test_get_table_rules_strips_master_suffix(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    rules = service.get_table_rules("orders_master")
+    rules = service.get_table_schema("orders_master")
 
     assert rules == {"attributes": {"path": "catalog/orders"}}

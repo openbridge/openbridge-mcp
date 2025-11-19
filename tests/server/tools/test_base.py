@@ -41,6 +41,34 @@ def test_get_auth_headers_converts_refresh_token(monkeypatch):
 
     assert headers == {"Authorization": "Bearer jwt-token"}
 
+def test_get_auth_headers_prefers_context_jwt(monkeypatch):
+    ctx = SimpleNamespace(_openbridge_jwt="ctx-token")
+
+    def fail_get_auth():
+        raise AssertionError("get_auth should not be called when ctx JWT is available")
+
+    monkeypatch.setattr(base, "get_auth", fail_get_auth)
+
+    headers = base.get_auth_headers(ctx)
+
+    assert headers == {"Authorization": "Bearer ctx-token"}
+
+
+def test_get_auth_headers_uses_context_get_state(monkeypatch):
+    class Ctx:
+        def get_state(self, key):
+            assert key == "jwt_token"
+            return "ctx-token"
+
+    def fail_get_auth():
+        raise AssertionError("get_auth should not be called when ctx JWT is available")
+
+    monkeypatch.setattr(base, "get_auth", fail_get_auth)
+
+    headers = base.get_auth_headers(Ctx())
+
+    assert headers == {"Authorization": "Bearer ctx-token"}
+
 def test_get_auth_headers_raises_on_conversion_failure(monkeypatch):
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "abc:def")
 

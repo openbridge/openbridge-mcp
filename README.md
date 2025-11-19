@@ -104,7 +104,7 @@ For more information about getting connected with Claude Desktop, visit the [**m
   - `get_suggested_table_names`
     - Searches the Rules API (via the Service API) for tables that match the intent of your SQL, returning `_master` suffixed table names plus usage guidance.
     - Example LLM request: `Suggest the best table names for a query about sponsored product spend`
-  - `get_table_rules`
+  - `get_table_schema`
     - Fetches the rules document for a table, whether or not you provide the `_master` suffix, so you can confirm allowed filters and columns.
     - Example LLM request: `Show the rules for table retail_orders_master`
 
