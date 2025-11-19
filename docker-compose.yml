@@ -3,7 +3,7 @@ services:
   openbridge-mcp:
     build: .
     ports:
-      - "8010:8010"
+      - "8000:8000"
     volumes:
       - type: bind
         source: .env

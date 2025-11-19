@@ -1,6 +1,6 @@
-## Openbridge MCP Server
+# Openbridge MCP Server
 
-The *Openbridge MCP Server* is a FastMCP server which enables LLMs to perform various tasks within the Openbridge platform. 
+The *Openbridge MCP Server* is a MCP server which enables LLMs to perform various tasks within the Openbridge platform. 
 
 ## Deployment
 Detailed below are setup and configuration instructions for a local machine, but the same steps can be taken to deploy the MCP on a remote server hosted on [AWS Fargate/EC2](https://aws.amazon.com/fargate), [Google Cloud Plaform (GCP)](https://cloud.google.com/blog/topics/developers-practitioners/build-and-deploy-a-remote-mcp-server-to-google-cloud-run-in-under-10-minutes), or any other remote server technology that best fits your environment.
@@ -8,11 +8,11 @@ Detailed below are setup and configuration instructions for a local machine, but
 ### Docker deployment
 1. Create a `.env` file at the project root with the variables listed below. The compose file mounts it into the container at `/app/.env`.
 2. Build and start the stack: `docker compose up --build -d openbridge-mcp`
-   - The compose file maps `8010:8010`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
+   - The compose file maps `8000:8000`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
 3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
-4. Connect your MCP client to `http://localhost:8000/mcp` (or the port you chose).
+4. Connect your MCP client to your server. If you did this locally, the address would look like: `http://localhost:8000/mcp` (or the port you chose). Running this on a remote server on Cloudflare, the URL would look like `https://mcp-openbridge-mcp.6fdec1c7650b77137a09f6fa4f2c9ca8.workers.dev`.
 
-If you prefer raw Docker commands, run `docker buildx -t openbridge-mcp .` and then start it with `docker run --env-file .env -p 8010:8010 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
+If you need as Intel/AMD compatable environment, you can build for both like this: `docker buildx build --platform linux/amd64,linux/arm64 -t openbridgeops/openbridge-mcp:latest .` and then start it with `docker run --env-file .env -p 8000:8000 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
 
 ### Local deployment
 As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
@@ -22,7 +22,7 @@ As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to cr
 3. Start the server:
    - Python: `python main.py`
    - The server listens on `0.0.0.0:${MCP_PORT}` using HTTP transport.
-4. Connect from an MCP client. Example for the `fastagent` `mcp-remote` client is shown below.
+4. Connect from an MCP client.
 
 ### Environment variables (.env)
 Required for server and tools to function. Values typically point to your environment (dev/stage/prod) of Openbridge APIs.
@@ -30,7 +30,13 @@ Required for server and tools to function. Values typically point to your enviro
 - Server
   - `MCP_PORT` (default `8010`): Port for the HTTP MCP server.
 - Authentication
-  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token or bearer token used to obtain/send Authorization headers. If not provided, authentication will be the responsibility of the MCP client.
+  - `OPENBRIDGE_REFRESH_TOKEN` (required for protected tools): Refresh token used to obtain service JWTs. When unset the server skips authentication and downstream API calls will fail with `401`.
+  - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
+- Query Validation (AI-powered)
+  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools use AI-powered sampling to validate SQL queries and ensure they follow best practices (read-only operations, proper LIMIT clauses, etc.). Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
+  - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
+  - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint for query validation.
+  - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Explicitly opt in to sending SQL text to the configured OpenAI-compatible endpoint for validation. When disabled the server uses heuristics only.
 
 Example `.env` template:
 ```bash
@@ -39,10 +45,19 @@ MCP_PORT=8000
 
 # Authentication settings
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
+# Optional timeout in seconds (connect timeout fixed at 10s)
+OPENBRIDGE_API_TIMEOUT=45
+# Opt-in to AI validation; by default only heuristics run and no SQL leaves your environment
+OPENBRIDGE_ENABLE_LLM_VALIDATION=false
+
+# Query validation (AI-powered) - required for validate_query and execute_query tools
+FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
+# or use OPENAI_API_KEY if you prefer
+# OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
 ```
 
 ### Client configuration (example)
-Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. Below is a sample configuration for use with Claude Desktop, assuming `MCP_PORT=8010` in your `.env` file.
+Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. Below is a sample configuration for use with Claude Desktop, assuming `MCP_PORT=8000` in your `.env` file.
 
 ```json
 {
@@ -53,7 +68,7 @@ Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. B
         "-y",
         "--allow-http",
         "mcp-remote@latest",
-        "http://localhost:8010/mcp",
+        "http://localhost:8000/mcp",
         "--header",
         "Authorization:${AUTH_HEADER}"
       ],
@@ -76,12 +91,13 @@ For more information about getting connected with Claude Desktop, visit the [**m
     - Retrieves a single remote identity by ID and flattens the nested `attributes` into top-level keys for easier prompting.
     - Example LLM request: `Fetch remote identity 12345 and show the flattened attributes`
 
-- Query
+- Query (AI-powered validation - requires OpenAI API key)
+  - **Note**: Both query tools require `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` to be configured. These tools use AI-powered sampling to intelligently validate SQL queries and ensure best practices. See the [OpenAI Platform documentation](https://platform.openai.com/docs/api-reference/introduction) to obtain an API key. Without an API key configured, these tools will not be available.
   - `validate_query`
-    - Runs a safety check against the FastMCP sampling guardrails to confirm a query is read-only and contains a `LIMIT` unless you explicitly pass `allow_unbounded=True`.
+    - Uses AI-powered sampling to analyze SQL queries for safety and best practices. Confirms queries are read-only, contain proper `LIMIT` clauses, and follow security guidelines. Pass `allow_unbounded=True` to explicitly permit queries without `LIMIT` clauses.
     - Example LLM request: `Validate this SQL against key finance and confirm it has a LIMIT 25`
   - `execute_query`
-    - Executes SQL through the Service API after validation succeeds; override the safeguard with `allow_unbounded=True` only when you intend to run without a `LIMIT`.
+    - First validates the SQL query using AI-powered sampling, then executes it through the Openbridge Service API. Requires both `OPENBRIDGE_REFRESH_TOKEN` and an OpenAI API key. Override validation safeguards with `allow_unbounded=True` only when you intend to run queries without a `LIMIT`.
     - Example LLM request: `Execute the validated SQL on key merchandising with LIMIT 100`
 
 - Rules - see [our data catalog documentation](https://docs.openbridge.com/en/articles/2247373-data-catalog-how-we-organize-and-manage-data-in-your-data-lake-or-cloud-warehouse) for more information.
@@ -122,6 +138,12 @@ For more information about getting connected with Claude Desktop, visit the [**m
 - Authentication
   - If present, the server will attempt to exchange the `OPENBRIDGE_REFRESH_TOKEN` environment variable (or supplied by your `.env` file) for a JWT.
   - If `OPENBRIDGE_REFRESH_TOKEN` is not set, the MCP client must provide the authentication header as described above.
+- Query validation (AI-powered)
+  - The `validate_query` and `execute_query` tools use AI-powered sampling via the OpenAI API to intelligently analyze SQL queries for safety issues, best practices violations, and potential security concerns.
+  - These tools are only available when `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` is configured in your environment.
+  - The AI validation checks for: read-only operations, proper LIMIT clauses, suspicious patterns, and SQL injection risks.
+  - Get your API key from the [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
+  - Cost consideration: Query validation typically uses the `gpt-4o-mini` model (configurable via `FASTMCP_SAMPLING_MODEL`), which is cost-effective for this use case.
 - Error handling
   - Tools return empty lists or dictionaries with an `error` key when API calls fail; check responses for errors.
 - Networking

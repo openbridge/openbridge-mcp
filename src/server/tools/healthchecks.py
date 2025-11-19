@@ -1,11 +1,12 @@
+import os
+from typing import Any, Dict, List, Optional
+
 import jwt
 import requests
+from fastmcp.server.context import Context
 
 from src.utils.logging import get_logger
-from .base import get_auth_headers
-from typing import Any, Dict, List, Optional
-import os
-from fastmcp.server.context import Context
+from .base import get_api_timeout, get_auth_headers, safe_pagination_url
 
 HC_BASE_URL = os.getenv(
     'HEALTHCHECKS_API_BASE_URL', 
@@ -53,13 +54,22 @@ def get_healthchecks(
     healthchecks = []
     while next_page:
         params["page"] = next_page
-        response = requests.get(f"{HC_BASE_URL}/{account_id}", headers=headers, params=params)
+        response = requests.get(
+            f"{HC_BASE_URL}/{account_id}",
+            headers=headers,
+            params=params,
+            timeout=get_api_timeout(),
+        )
         if response.status_code == 200:
             hcs = response.json().get("results", [])
             healthchecks.extend(hcs)
             logger.debug(f"Fetched {len(hcs)} healthchecks from page {next_page}")
             # Paginate if necessary
-            if response.json().get('links', {}).get('next'):
+            next_link = safe_pagination_url(
+                response.json().get('links', {}).get('next'),
+                HC_BASE_URL,
+            )
+            if next_link:
                 next_page += 1
                 if next_page > HEALTHCHECKS_MAX_PAGES:
                     logger.warning("Reached maximum number of pages for healthchecks.")

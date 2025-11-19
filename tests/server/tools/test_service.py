@@ -17,6 +17,7 @@ def test_validate_query_requires_openai_key(monkeypatch):
             return SimpleNamespace(text="{}")
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
 
     with pytest.raises(ValueError):
         asyncio.run(service.validate_query("select 1 limit 1", key_name="acc", ctx=DummyContext()))
@@ -24,6 +25,7 @@ def test_validate_query_requires_openai_key(monkeypatch):
 
 def test_validate_query_allows_read_only_query(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "true")
 
     class DummyContext:
         def __init__(self):
@@ -50,6 +52,7 @@ def test_validate_query_allows_read_only_query(monkeypatch):
 
 def test_validate_query_denies_query_without_limit(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "true")
 
     class DummyContext:
         async def sample(self, **kwargs):
@@ -75,7 +78,7 @@ def test_execute_query_returns_data_on_success(monkeypatch):
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
 
-    def fake_post(url, json, headers):
+    def fake_post(url, json, headers, timeout):
         assert url == "https://service.test/service/query/production/query"
         assert json["data"]["attributes"]["query"] == "select 1"
         return SimpleNamespace(status_code=200, json=lambda: {"data": [{"row": 1}]})
@@ -115,7 +118,7 @@ def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, params=None, headers=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         assert url == "https://service.test/service/rules/prod/v1/rules/search"
         assert params == {"path": "path-query", "latest": "true"}
         return SimpleNamespace(
@@ -138,7 +141,7 @@ def test_get_table_rules_strips_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, timeout=None):
         assert url == "https://service.test/service/rules/prod/v1/rules/search?path=orders&latest=true"
         return SimpleNamespace(
             status_code=200,

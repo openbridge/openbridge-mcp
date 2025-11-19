@@ -1,41 +1,69 @@
 """Structured logging configuration for the MCP Query Execution server."""
 
+import copy
 import logging
 import sys
-from typing import Optional
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from src.utils.security import SanitizingFormatter
 
 
 class StructuredFormatter(logging.Formatter):
-    """Custom formatter for structured logging."""
-    
+    """Custom formatter for structured logging with sanitization."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._sanitizer = SanitizingFormatter("%(message)s")
+
     def format(self, record: logging.LogRecord) -> str:
         """Format log record with structured data."""
-        # Add timestamp
-        record.timestamp = datetime.now(timezone.utc).isoformat()
-        
-        # Add structured fields
+        sanitized = copy.copy(record)
+        if record.args:
+            sanitized.args = copy.copy(record.args)
+        # Apply sanitization side effects.
+        self._sanitizer.format(sanitized)
+
+        sanitized.timestamp = datetime.now(timezone.utc).isoformat()
+
         structured_data = {
-            "timestamp": record.timestamp,
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
+            "timestamp": sanitized.timestamp,
+            "level": sanitized.levelname,
+            "logger": sanitized.name,
+            "message": sanitized.getMessage(),
         }
-        
-        # Add exception info if present
-        if record.exc_info:
-            structured_data["exception"] = self.formatException(record.exc_info)
-        
-        # Add extra fields
-        for key, value in record.__dict__.items():
-            if key not in ["name", "msg", "args", "levelname", "levelno", "pathname", 
-                          "filename", "module", "lineno", "funcName", "created", 
-                          "msecs", "relativeCreated", "thread", "threadName", 
-                          "processName", "process", "getMessage", "exc_info", 
-                          "exc_text", "stack_info", "timestamp"]:
+
+        if sanitized.exc_info:
+            structured_data["exception"] = self.formatException(sanitized.exc_info)
+
+        for key, value in sanitized.__dict__.items():
+            if key not in [
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+                "getMessage",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "timestamp",
+            ]:
                 structured_data[key] = value
-        
+
         return f"{structured_data}"
 
 
