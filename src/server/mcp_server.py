@@ -78,7 +78,7 @@ def create_mcp_server() -> FastMCP:
     )(service_tools.get_amazon_advertising_profiles)
     mcp.tool(
         name='get_table_schema',
-        description='Get the schema for a given table name from the rules API. Returns the schema if found.',
+        description='Get the schema/rules for a given table name from the rules API. Use table names from list_product_tables output. Returns the schema if found.',
     )(service_tools.get_table_schema)
     mcp.tool(
         name='get_suggested_table_names',
@@ -119,6 +119,29 @@ def create_mcp_server() -> FastMCP:
         name='get_product_stage_ids',
         description='Get the stage IDs for a specific product. Returns a list of stage IDs associated with the product.',
     )(products_tools.get_product_stage_ids)
+    mcp.tool(
+        name='search_products',
+        description='''Search for Openbridge data products by name (fuzzy matching with ranking).
+
+Use broad search terms for best results - partial matches are ranked by relevance.
+Examples: "Amazon Ads", "Google Analytics", "Facebook", "Sponsored Products"
+
+Returns: List of matching products with id, name, and worker_name.
+Next step: Use product id with list_product_tables to see available tables.''',
+    )(products_tools.search_products)
+    mcp.tool(
+        name='list_product_tables',
+        description='''List all tables (data payloads) available for a specific product.
+
+Args:
+  - product_id: Product ID from search_products (required)
+  - subscription_id: Optional - filters tables to only those enabled for this subscription
+
+Returns: List of table objects with name, stage_id, and id fields.
+Next step: Use table name with get_table_schema to see column details and rules.
+
+Example workflow: search_products("Amazon Ads") → list_product_tables(50) → get_table_schema("amzn_ads_sp_campaigns")''',
+    )(products_tools.list_product_tables)
 
     # Health check endpoint for monitoring and load balancers
     @mcp.custom_route("/health", methods=["GET"])
