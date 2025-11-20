@@ -125,16 +125,143 @@ For more information about getting connected with Claude Desktop, visit the [**m
   - `get_jobs`
     - Returns jobs scoped to a subscription with optional status and primary flags so you can inspect running or historical syncs.
     - Example LLM request: `List active primary jobs for subscription 987`
-  - `create_oneoff_jobs`
+  - `create_job`
     - Schedules one-off (historical) jobs for the subscription using ISO date strings and stage IDs that you can source from `get_product_stage_ids`.
     - Example LLM request: `Create one-off jobs for subscription 987 from 2024-01-01 to 2024-01-07 using stage ids [12, 34]`
 
-- Products
+- Subscriptions
+  - `get_subscriptions`
+    - Lists all subscriptions for the current user with pagination support. Returns subscription details including product IDs, status, and metadata.
+    - Example LLM request: `Show me all my subscriptions`
+  - `get_storage_subscriptions`
+    - Lists active storage subscriptions linked to the current account. Returns storage-specific subscription details.
+    - Example LLM request: `List my storage subscriptions`
+
+- Products & Table Discovery
+  - **Interactive workflow**: Use `search_products` → `list_product_tables` → `get_table_schema` for guided table discovery
+  - `search_products`
+    - Search for Openbridge products by name (case-insensitive). Returns matching products with IDs for use with `list_product_tables`.
+    - Example LLM request: `Find products matching "Amazon Ads Sponsored"`
+  - `list_product_tables`
+    - List tables (payloads) available for a product. Optionally filter by `subscription_id` to show only tables enabled for that subscription based on stage_ids.
+    - Example LLM request: `Show me all tables for product 50` or `List tables for product 50 subscription 128853`
   - `get_product_stage_ids`
     - Returns stage IDs for a product, applying sensible `stage_id__gte` filters so you can quickly feed the results into job creation.
     - Example LLM request: `Look up the stage ids for product ob-product-123`
 
-### Notes
+## Usage Examples
+
+The Openbridge MCP server enables natural, conversational interactions with your data infrastructure. Here are common workflows:
+
+### Discovering Tables and Schemas
+
+**Interactive 3-step workflow** for finding and exploring tables:
+
+**Example conversation:**
+```
+You: "Show me tables for Amazon Advertising Sponsored Products"
+
+MCP: Calls search_products("Amazon Advertising Sponsored Products")
+     Returns: [
+       {"id": 70, "name": "Amazon Advertising Insights", ...},
+       {"id": 48, "name": "Amazon Ads - Sponsored Products", ...}
+     ]
+
+MCP: "I found these Amazon Advertising products:
+     1. Amazon Advertising Insights (ID: 70)
+     2. Amazon Ads - Sponsored Products (ID: 48)
+     Which would you like to explore?"
+
+You: "The Sponsored Products one"
+
+MCP: Calls list_product_tables(product_id=48)
+     Returns list of tables for Sponsored Products
+
+MCP: "Here are the available tables for Amazon Ads - Sponsored Products:
+     - amzn_ads_sp_campaigns
+     - amzn_ads_sp_adgroups
+     - amzn_ads_sp_keywords
+     - amzn_ads_sp_search_terms
+     Which table schema would you like to see?"
+
+You: "Show me the campaigns table schema"
+
+MCP: Calls get_table_schema("amzn_ads_sp_campaigns")
+     Returns complete schema with field definitions, types, rules
+```
+
+**Best practices for product search:**
+- Use **broad, general terms**: "Amazon Ads", "Google Analytics", "Facebook"
+- Avoid overly specific queries: ❌ "Amazon Advertising Sponsored Products Display Ads API v3"
+- Queries are fuzzy-matched and ranked by relevance
+- Partial word matches work: "Sponsored" will find products containing that word
+
+### Working with Subscriptions
+
+**Filter tables by subscription:**
+```
+You: "What tables are enabled for subscription 128853?"
+
+MCP: Calls list_product_tables(product_id=50, subscription_id=128853)
+     Returns only tables enabled for this subscription based on stage_ids
+
+MCP: "Subscription 128853 has these tables enabled:
+     - amzn_ads_sb_campaigns (stage_id: 1004)
+     - amzn_ads_sb_keywords (stage_id: 1006)
+     ..."
+```
+
+### Creating Historical Jobs
+
+**Multi-step job creation:**
+```
+You: "Create a historical job for subscription 987 from Jan 1-7, 2024"
+
+MCP: Calls get_product_stage_ids(product_id=...) to get available stages
+     Calls create_job(subscription_id=987,
+                               date_start="2024-01-01",
+                               date_end="2024-01-07",
+                               stage_ids=[1004, 1005, ...])
+
+MCP: "Created historical jobs for subscription 987 covering Jan 1-7, 2024"
+```
+
+### Monitoring and Health Checks
+
+**Check subscription health:**
+```
+You: "Show me any errors for subscription 555 in the last week"
+
+MCP: Calls get_healthchecks(subscription_id=555, filter_date="2024-01-15")
+     Returns healthcheck errors
+
+MCP: "Found 3 errors for subscription 555:
+     - Job 12345 failed on 2024-01-16 (API rate limit)
+     - ..."
+```
+
+### Query Validation (AI-Powered)
+
+**Safe SQL execution with validation:**
+```
+You: "I want to run: SELECT * FROM orders_master WHERE date > '2024-01-01'"
+
+MCP: Calls validate_query(query="SELECT * FROM orders_master WHERE...",
+                          key_name="production_db")
+     AI analyzes query for safety
+
+MCP: "⚠️ Warning: Query lacks LIMIT clause and may return large result set.
+     Recommendation: Add LIMIT 1000 or set allow_unbounded=True"
+
+You: "Add LIMIT 100"
+
+MCP: Calls execute_query(query="SELECT * FROM orders_master... LIMIT 100",
+                         key_name="production_db")
+     Returns results
+```
+
+## Notes
+
 - Authentication
   - If present, the server will attempt to exchange the `OPENBRIDGE_REFRESH_TOKEN` environment variable (or supplied by your `.env` file) for a JWT.
   - If `OPENBRIDGE_REFRESH_TOKEN` is not set, the MCP client must provide the authentication header as described above.
@@ -153,139 +280,3 @@ For more information about getting connected with Claude Desktop, visit the [**m
   - Deployers must layer their own client authentication (e.g., network isolation, mTLS proxies, signed client configs, or OS-level ACLs) to ensure only trusted agents can invoke the server.
   - Rotate tokens regularly and monitor access logs to detect misuse when multiple operators share the same deployment.
   - You can also plug FastMCP's standard authentication providers directly into this server (JWT validation, OAuth proxy, WorkOS AuthKit, etc.) if you prefer first-class per-client auth at the MCP layer; choose the provider that aligns with your org's identity stack.
-
-## Development
-
-### Setup
-
-Use the provided Makefile for common development tasks. All commands mirror the CI workflow to ensure consistency.
-
-1. **Initial setup** (create virtual environment):
-   ```bash
-   make setup
-   source .venv/bin/activate  # or `. .venv/bin/activate`
-   ```
-
-2. **Install dependencies** (within active venv):
-   ```bash
-   make install
-   ```
-
-### Running Tests
-
-Run the full test suite:
-```bash
-make test
-```
-
-This sets `AUTH_ENABLED=false` and runs pytest with verbose output, matching the CI environment.
-
-### Code Quality
-
-**Lint your code** before committing:
-```bash
-make lint
-```
-
-**Auto-fix linting issues**:
-```bash
-make lint-fix
-```
-
-**Format code**:
-```bash
-make format
-```
-
-**Static syntax check**:
-```bash
-make check
-```
-
-**Run all quality checks** (lint + syntax + tests):
-```bash
-make all
-```
-
-### Starting the Server Locally
-
-```bash
-make serve
-```
-
-This runs `python main.py` with your `.env` configuration.
-
-### Makefile Targets
-
-Run `make help` to see all available targets:
-
-```
-Available targets:
-  setup          Install dependencies in a new virtual environment
-  install        Install all dependencies (requires active venv)
-  test           Run tests with pytest
-  lint           Run linter (ruff) on src and tests
-  lint-fix       Run linter and auto-fix issues
-  format         Format code with ruff
-  check          Run static syntax check
-  serve          Start the MCP server
-  clean          Remove Python cache files and artifacts
-  all            Run all quality checks
-```
-
-### CI/CD
-
-The project uses GitHub Actions for continuous integration and releases.
-
-**Continuous Integration** (`ci.yml`)
-
-On every pull request and push to `main`:
-- Tests run on Python 3.10.15 and 3.12.7
-- Code is linted with ruff
-- Static syntax validation runs via `compileall`
-- Test results are uploaded as artifacts
-
-**Releases** (`release.yml`)
-
-Releases are **automatically created** when you merge to `main`. The workflow uses [Conventional Commits](https://www.conventionalcommits.org/) to determine version bumps and generate changelogs.
-
-**Commit Message Format:**
-
-```bash
-# Patch release (0.1.0 → 0.1.1)
-fix: resolve authentication timeout issue
-fix(auth): handle expired tokens gracefully
-
-# Minor release (0.1.0 → 0.2.0)
-feat: add new subscription management tools
-feat(api): implement rate limiting
-
-# Major release (0.1.0 → 1.0.0)
-feat!: redesign authentication flow
-# or include "BREAKING CHANGE" in commit body
-
-# Other commits (triggers patch release)
-chore: update dependencies
-docs: improve installation guide
-```
-
-**Automatic Release Process:**
-
-On every merge to `main`:
-1. Analyze commit messages to determine version bump
-2. Update `pyproject.toml` with new version
-3. Generate categorized changelog (✨ Features, 🐛 Fixes, etc.)
-4. Create GitHub Release with changelog
-5. Build and attach Python packages
-6. (Optional) Publish to PyPI if configured
-
-**Manual Release:**
-
-You can also trigger a release manually via GitHub Actions:
-1. Go to Actions → Release → Run workflow
-2. Select version type (patch/minor/major)
-3. Workflow runs automatically
-
-**Skip Release:**
-
-Include `[skip ci]` in commit message to prevent automatic release.
