@@ -17,7 +17,7 @@ If you need as Intel/AMD compatable environment, you can build for both like thi
 ### Local deployment
 As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
 
-1. Create a `.env` in the project's root folder (see Variables below). At minimum set `MCP_PORT` and `OPENBRIDGE_REFRESH_TOKEN`.
+1. Create a `.env` in the project's root folder (see Variables below). At minimum set `MCP_PORT`. Optionally set `OPENBRIDGE_REFRESH_TOKEN` for server-side authentication (clients can also provide tokens via Authorization headers).
 2. Run the command `uv venv --python 3.12.7 && uv pip install -r requirements.txt`
 3. Start the server:
    - Python: `python main.py`
@@ -30,7 +30,7 @@ Required for server and tools to function. Values typically point to your enviro
 - Server
   - `MCP_PORT` (default `8010`): Port for the HTTP MCP server.
 - Authentication
-  - `OPENBRIDGE_REFRESH_TOKEN` (required for protected tools): Refresh token used to obtain service JWTs. When unset the server skips authentication and downstream API calls will fail with `401`.
+  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication. When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
 - Query Validation (AI-powered)
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools use AI-powered sampling to validate SQL queries and ensure they follow best practices (read-only operations, proper LIMIT clauses, etc.). Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
@@ -262,9 +262,11 @@ MCP: Calls execute_query(query="SELECT * FROM orders_master... LIMIT 100",
 
 ## Notes
 
-- Authentication
-  - If present, the server will attempt to exchange the `OPENBRIDGE_REFRESH_TOKEN` environment variable (or supplied by your `.env` file) for a JWT.
-  - If `OPENBRIDGE_REFRESH_TOKEN` is not set, the MCP client must provide the authentication header as described above.
+- Authentication (Dual-Mode)
+  - **Server-side auth**: Set `OPENBRIDGE_REFRESH_TOKEN` in the server's environment. The server automatically exchanges it for JWTs.
+  - **Client-side auth**: Clients pass `Authorization: Bearer <token>` headers. The server uses the client-provided token directly.
+  - **Priority**: Client-provided tokens take precedence over server tokens. If neither is provided, API calls fail with `401`.
+  - The server starts successfully even without `OPENBRIDGE_REFRESH_TOKEN`, enabling pure client-side authentication deployments.
 - Query validation (AI-powered)
   - The `validate_query` and `execute_query` tools use AI-powered sampling via the OpenAI API to intelligently analyze SQL queries for safety issues, best practices violations, and potential security concerns.
   - These tools are only available when `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` is configured in your environment.
