@@ -1,9 +1,10 @@
 
 services:
   openbridge-mcp:
-    image: openbridgeops/openbridge-mcp:latest
+    build: .
+    image: openbridge-mcp:local
     ports:
-      - "8000:8000"
+      - "8002:8000"
     volumes:
       - type: bind
         source: .env

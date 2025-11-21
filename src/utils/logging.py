@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,7 +69,7 @@ class StructuredFormatter(logging.Formatter):
 
 
 def setup_logging(
-    level: str = "DEBUG",
+    level: str = "INFO",
     log_file: Optional[Path] = None,
     log_format: str = "structured"
 ) -> logging.Logger:
@@ -126,5 +127,5 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f"mcp_query_execution.{name}")
 
 
-# Default logger setup
-default_logger = setup_logging() 
+# Default logger setup - use LOG_LEVEL env var or default to INFO
+default_logger = setup_logging(level=os.getenv("LOG_LEVEL", "INFO")) 

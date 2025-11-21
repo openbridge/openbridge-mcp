@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from server.mcp_server import create_mcp_server
+from auth.token_verifier import create_token_middleware
 from utils.logging import get_logger
 
 logger = get_logger("main")
@@ -23,8 +24,9 @@ def main():
 
         # Create and run MCP server
         server = create_mcp_server()
+        http_middleware = create_token_middleware()
         logger.info("Starting MCP server with HTTP transport")
-        server.run(transport="http", host="0.0.0.0", port=MCP_PORT)
+        server.run(transport="http", host="0.0.0.0", port=MCP_PORT, middleware=http_middleware)
 
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

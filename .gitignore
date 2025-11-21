@@ -58,3 +58,4 @@ yarn-error.log*
 .tmp/
 *.tmp
 fastagent.jsonl
+.env.bak

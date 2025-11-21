@@ -13,8 +13,6 @@ from src.server.tools import jobs as jobs_tools  # noqa: E402
 from src.server.tools import products as products_tools  # noqa: E402
 from src.server.tools import subscriptions as subscriptions_tools  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
-from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
-from src.auth.manager import get_auth_manager  # noqa: E402
 from src.server.sampling import create_sampling_handler  # noqa: E402
 
 
@@ -22,17 +20,6 @@ logger = get_logger("mcp_server")
 
 def create_mcp_server() -> FastMCP:
     """Create and configure the MCP server."""
-    # Create middleware stack
-
-    # Configure JWT middleware
-    auth_cfg = create_openbridge_config()
-    auth_cfg.enabled = True
-    auth_cfg.refresh_token_enabled = True
-    auth_cfg.jwt_validation_enabled = True
-    auth_cfg.jwt_verify_signature = True  # SECURITY: Always verify JWT signatures
-    auth_manager = get_auth_manager()
-    middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
-
     sampling_handler = create_sampling_handler()
 
     # Initialize FastMCP server
@@ -41,9 +28,6 @@ def create_mcp_server() -> FastMCP:
         instructions="Openbridge MCP server for utilizing a variety of API endpoints and tools.",
         sampling_handler=sampling_handler,
     )
-    for mw in middleware:
-        mcp.add_middleware(mw)
-
     # Register tools
     # Remote identity tools
     mcp.tool(
