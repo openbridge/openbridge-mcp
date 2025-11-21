@@ -37,13 +37,7 @@ class OpenbridgeAuth:
     """Convert an Openbridge refresh token into a short-lived JWT."""
 
     def __init__(self) -> None:
-        refresh_token = os.getenv("OPENBRIDGE_REFRESH_TOKEN")
-        if not refresh_token:
-            raise AuthenticationError(
-                "OPENBRIDGE_REFRESH_TOKEN environment variable is required"
-            )
-
-        self.refresh_token = refresh_token
+        self.refresh_token: Optional[str] = os.getenv("OPENBRIDGE_REFRESH_TOKEN")
         self.auth_base_url = os.getenv(
             "OPENBRIDGE_AUTH_BASE_URL",
             "https://authentication.api.openbridge.io",
@@ -52,6 +46,10 @@ class OpenbridgeAuth:
 
     def get_jwt(self) -> str:
         """Return a cached JWT, refreshing when needed."""
+        if not self.refresh_token:
+            raise AuthenticationError(
+                "OPENBRIDGE_REFRESH_TOKEN not available for JWT generation"
+            )
         if self._cache and self._cache.is_valid():
             return self._cache.token
         return self._refresh()

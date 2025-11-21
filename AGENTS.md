@@ -141,9 +141,12 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
 - **Server**
   - `MCP_PORT` (default `8000`): Port for HTTP MCP server
 
-- **Authentication**
-  - `OPENBRIDGE_REFRESH_TOKEN` (required): Token in format `xxx:yyy` for obtaining service JWTs
-    - When unset, server starts but API calls fail with 401
+- **Authentication (Dual-Mode)**
+  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Token in format `xxx:yyy` for server-side authentication
+    - When set: Server exchanges refresh token for JWTs automatically
+    - When unset: Clients must provide `Authorization: Bearer <token>` headers
+    - Client tokens take precedence over server tokens
+    - Server starts successfully without this variable, enabling pure client-side auth
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) for Openbridge HTTP requests
     - Connect timeout is fixed at 10 seconds
 
