@@ -4,8 +4,6 @@ from src.utils.logging import get_logger
 import asyncio
 import yaml
 import os
-from src.auth.authentication import create_auth_middleware, create_openbridge_config
-from src.auth.manager import get_auth_manager
 
 logger = get_logger("authentication")
 
@@ -21,21 +19,12 @@ print(openapi_spec)
 # Enable experimental OpenAPI MCP processing
 os.environ["FASTMCP_EXPERIMENTAL_ENABLE_NEW_OPENAPI_PARSER"] = "true"
 
-# Create middleware stack
-auth_cfg = create_openbridge_config()
-auth_manager = get_auth_manager()
-middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
-
 # Create the MCP server
 mcp = FastMCP.from_openapi(
     openapi_spec=openapi_spec,
     client=client,
     name="Authentication API MCP Server"
 )
-# Register middleware
-for mw in middleware:
-    mcp.add_middleware(mw)
-    logger.info("Openbridge authentication middleware enabled")
 
 # Collect all tools from the MCP
 # mcp.get_tools is async, so we need to run it in an async context

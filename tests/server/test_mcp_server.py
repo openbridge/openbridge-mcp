@@ -1,11 +1,6 @@
 from src.server import mcp_server
 
 
-class FakeAuthConfig:
-    def __init__(self):
-        self.enabled = False
-
-
 class FakeFastMCP:
     def __init__(self, *, name, instructions, sampling_handler):
         self.name = name
@@ -35,30 +30,18 @@ class FakeFastMCP:
 
 def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     """Test that query validation tools are registered when API key is present."""
-    fake_middleware = object()
     fake_sampling_handler = object()
-    fake_config = FakeAuthConfig()
 
     # Set an API key to enable query validation tools
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-
-    def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        assert config is fake_config
-        assert jwt_middleware is False
-        assert auth_manager == "auth-manager"
-        return [fake_middleware]
-
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: fake_sampling_handler)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
 
     assert isinstance(server, FakeFastMCP)
-    assert server.middleware == [fake_middleware]
+    assert server.middleware == []
     assert server.sampling_handler is fake_sampling_handler
 
     expected_tools = {
@@ -85,21 +68,12 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
 
 def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
     """Test that query validation tools are NOT registered when API key is missing."""
-    fake_middleware = object()
     fake_sampling_handler = object()
-    fake_config = FakeAuthConfig()
 
     # Ensure no API keys are set
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
 
-    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-
-    def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        return [fake_middleware]
-
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: fake_sampling_handler)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
@@ -131,17 +105,12 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
 
 def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     """Test that FASTMCP_SAMPLING_API_KEY also enables query validation tools."""
-    fake_middleware = object()
     fake_sampling_handler = object()
-    fake_config = FakeAuthConfig()
 
     # Set FASTMCP_SAMPLING_API_KEY instead of OPENAI_API_KEY
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
 
-    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: fake_sampling_handler)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
@@ -154,13 +123,8 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
 
 def test_health_endpoint(monkeypatch):
     """Test that health check endpoint is registered."""
-    fake_middleware = object()
     fake_sampling_handler = object()
-    fake_config = FakeAuthConfig()
 
-    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: fake_sampling_handler)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 

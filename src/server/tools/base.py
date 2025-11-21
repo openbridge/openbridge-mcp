@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Dict, Optional
 from urllib.parse import urljoin, urlparse
 
-from src.auth.authentication import JWT_CONTEXT_ATTR, JWT_PUBLIC_ATTR
+from mcp.server.auth.middleware.auth_context import get_access_token
+
 from src.auth.simple import AuthenticationError, get_api_timeout, get_auth
 from src.utils.logging import get_logger
 from src.utils.security import ValidationError, validate_url
@@ -13,21 +14,9 @@ logger = get_logger("base_tools")
 
 def _get_context_jwt(ctx) -> Optional[str]:
     """Best-effort retrieval of a primed JWT from the FastMCP context."""
-    if not ctx:
-        return None
-
-    get_state = getattr(ctx, "get_state", None)
-    if callable(get_state):
-        try:
-            jwt_token = get_state(JWT_PUBLIC_ATTR)
-            if jwt_token:
-                return jwt_token
-        except Exception:  # pragma: no cover - defensive
-            logger.debug("Context get_state accessor is unavailable")
-
-    jwt_token = getattr(ctx, JWT_CONTEXT_ATTR, None) or getattr(ctx, JWT_PUBLIC_ATTR, None)
-    if jwt_token:
-        return jwt_token
+    token = get_access_token()
+    if token:
+        return token.token
 
     return None
 
