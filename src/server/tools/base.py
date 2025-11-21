@@ -48,6 +48,12 @@ def get_auth_headers(ctx=None) -> Dict[str, str]:
     try:
         return auth.get_headers()
     except AuthenticationError as exc:
+        # If refresh token is not available, return empty headers (no auth)
+        if "not available" in str(exc):
+            logger.debug("OPENBRIDGE_REFRESH_TOKEN not available, proceeding without auth")
+            return {}
+
+        # For other auth errors (conversion failures, network issues), raise detailed error
         auth_url = f"{auth.auth_base_url}/auth/api/ref"
         logger.error("Authentication failed: %s", exc)
         raise AuthenticationError(
