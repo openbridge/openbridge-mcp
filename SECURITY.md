@@ -3,15 +3,29 @@
 This MCP server ships with a streamlined Openbridge authentication flow
 focused on local deployments. Key security behaviors:
 
-### Token handling
-- `OPENBRIDGE_REFRESH_TOKEN` is exchanged for a JWT on demand and cached in
+### Token handling (Dual-Mode)
+The server supports two authentication modes:
+
+**Server-side authentication:**
+- `OPENBRIDGE_REFRESH_TOKEN` (optional) is exchanged for a JWT on demand and cached in
   memory only; no file persistence.
 - **CRITICAL**: Never commit `OPENBRIDGE_REFRESH_TOKEN` to version control.
   Store it only in your local `.env` file (gitignored).
 - Failures to convert the refresh token raise an `AuthenticationError`. The
   server never falls back to sending the refresh token downstream.
+
+**Client-side authentication:**
+- Clients can provide `Authorization: Bearer <token>` headers directly.
+- Client-provided tokens take precedence over server-side tokens.
+- The server extracts client tokens from HTTP headers and uses them for API calls.
+- **IMPORTANT**: Client tokens should also never be committed to version control.
+  Pass them via environment variables in client configurations.
+
+**General:**
 - Logs redact bearer values. Debug instrumentation reports token length instead
   of full contents.
+- Server starts successfully without `OPENBRIDGE_REFRESH_TOKEN`, enabling pure
+  client-side authentication deployments.
 
 ### Network safeguards
 - All HTTP requests use explicit `(connect=10s, read=OPENBRIDGE_API_TIMEOUT)`

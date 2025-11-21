@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Iterable, List
 
+from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from .simple import OpenbridgeAuth, get_auth
@@ -54,13 +55,32 @@ class OpenbridgeAuthMiddleware(Middleware):
         if not context.fastmcp_context:
             return await call_next(context)
 
+        jwt_token = None
+
+        # Priority 1: Check for client-provided Authorization header
         try:
-            jwt_token = self._auth.get_jwt()
-            # Share with downstream tooling via both context layers.
+            http_request = get_http_request()
+            if http_request:
+                auth_header = http_request.headers.get("authorization", "")
+                if auth_header.startswith("Bearer "):
+                    jwt_token = auth_header[7:].strip()
+                    logger.debug("Using client-provided Bearer token (length: %d)", len(jwt_token))
+        except Exception as exc:
+            logger.debug("Could not extract client Authorization header: %s", exc)
+
+        # Priority 2: Fall back to server's refresh token
+        if not jwt_token:
+            try:
+                jwt_token = self._auth.get_jwt()
+                logger.debug("Using server refresh token to generate JWT")
+            except Exception:
+                # Debug level: Some MCP endpoints (health, list tools) don't require auth
+                logger.debug("No authentication configured (neither client token nor server refresh token)")
+
+        # Share JWT with downstream tooling if available
+        if jwt_token:
             _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
             _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.error("Failed to prime Openbridge JWT: %s", exc)
 
         return await call_next(context)
 
