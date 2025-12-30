@@ -34,8 +34,25 @@ def get_healthchecks(
     """
     headers = get_auth_headers(ctx)
     # Get the account ID from the JWT
-    jwt_token = headers.get("Authorization", "").split(" ")[-1]
-    jwt_payload = jwt.decode(jwt_token, options={"verify_signature": False, "verify_aud": False, "verify_iss": False})
+    auth_header = headers.get("Authorization", "")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        logger.error("No valid Authorization header found")
+        return []
+
+    jwt_token = auth_header.split(" ", 1)[1]
+    if not jwt_token:
+        logger.error("Empty JWT token in Authorization header")
+        return []
+
+    try:
+        jwt_payload = jwt.decode(
+            jwt_token,
+            options={"verify_signature": False, "verify_aud": False, "verify_iss": False}
+        )
+    except jwt.exceptions.DecodeError as e:
+        logger.error("Failed to decode JWT token: %s", e)
+        return []
+
     account_id = jwt_payload.get("account_id")
     if not account_id:
         logger.error("No account_id found in JWT token")

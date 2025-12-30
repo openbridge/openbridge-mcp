@@ -223,8 +223,9 @@ async def execute_query(
             )
             return [{"error": "Query validation failed", "validation": validation}]
     except ValueError as ve:
-        logger.error("Validation error: %s; continuing without validation", str(ve))
-        validation = "Skipped due to error"
+        # Fail-closed: do not execute query if validation cannot be performed
+        logger.error("Validation error: %s; denying execution", str(ve))
+        return [{"error": f"Query validation unavailable: {ve}", "validation": "unavailable"}]
 
     headers = get_auth_headers(ctx)
     payload = {
