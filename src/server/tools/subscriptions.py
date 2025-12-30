@@ -55,7 +55,9 @@ def get_subscriptions(
         params["status"] = status
     next_page_url = f"{SUBSCRIPTIONS_API_BASE_URL}/sub?page=1&page_size={SUBSCRIPTIONS_PAGE_SIZE}"
     subscriptions = []
-    while next_page_url:
+    page_count = 0
+    while next_page_url and page_count < SUBSCRIPTIONS_MAX_PAGES:
+        page_count += 1
         response = requests.get(
             next_page_url,
             headers=headers,
@@ -70,14 +72,19 @@ def get_subscriptions(
                 SUBSCRIPTIONS_API_BASE_URL,
             )
             if next_page_url:
-                if next_page_url:
-                    logger.debug(f"Fetching next page of subscriptions: {next_page_url}")
-                    continue
+                logger.debug("Fetching next page of subscriptions: %s", next_page_url)
+                continue
             break
         else:
-            logger.error(f"Failed to retrieve subscriptions: {response.status_code} - {response.text}")
+            logger.error(
+                "Failed to retrieve subscriptions: %s - %s",
+                response.status_code,
+                response.text
+            )
             return []
-    logger.debug(f"Retrieved {len(subscriptions)} subscriptions")
+    if page_count >= SUBSCRIPTIONS_MAX_PAGES:
+        logger.warning("Reached maximum number of pages (%d) for subscriptions", SUBSCRIPTIONS_MAX_PAGES)
+    logger.debug("Retrieved %d subscriptions", len(subscriptions))
     return subscriptions
 
 def get_subscription_by_id(
@@ -139,12 +146,27 @@ def get_storage_subscriptions(
         storages.append({"storage_id": sub['attributes']['storage_group_id'], "subscription_id": sub['id'], "name": name, "key_name": key_name})
     
     # Get SPM for each storage
-    response = []
+    result = []
     for storage in storages:
         url = f'{SUBSCRIPTIONS_API_BASE_URL}/spm?subscription={storage["subscription_id"]}'
         spm_resp = requests.get(url, headers=headers, timeout=get_api_timeout())
         spm_resp.raise_for_status()
-        storage_spm = {x['attributes']['data_key']: x['attributes']['data_value'] for x in spm_resp.json()['data'] if x['attributes']['data_key'] in SPM_REQUIRED_PARAMS}
-        storage_type = STORAGE_TYPE_MAPPING.get(spm_resp.json()['data'][0]['attributes']['product']['name'], 'unknown')
-        response.append({"storage_type": storage_type, **storage, **storage_spm})
-    return response
+        spm_data = spm_resp.json().get('data', [])
+        storage_spm = {
+            x['attributes']['data_key']: x['attributes']['data_value']
+            for x in spm_data
+            if x.get('attributes', {}).get('data_key') in SPM_REQUIRED_PARAMS
+        }
+        # Safely get storage type from first SPM entry if available
+        storage_type = 'unknown'
+        if spm_data:
+            product_name = (
+                spm_data[0]
+                .get('attributes', {})
+                .get('product', {})
+                .get('name')
+            )
+            if product_name:
+                storage_type = STORAGE_TYPE_MAPPING.get(product_name, 'unknown')
+        result.append({"storage_type": storage_type, **storage, **storage_spm})
+    return result

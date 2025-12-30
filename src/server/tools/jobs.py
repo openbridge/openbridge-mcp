@@ -92,6 +92,7 @@ def create_job(
             }
         }
 
+        response = None
         try:
             response = requests.post(
                 f"{os.getenv('HISTORY_API_BASE_URL')}/history/{subscription_id}",
@@ -101,8 +102,9 @@ def create_job(
             )
             response.raise_for_status()
             job_data.append(response.json().get('data', {}).get('attributes', {}))
-            logger.debug(f"Created one-off job: {job_data}")
+            logger.debug("Created one-off job: %s", job_data)
         except requests.RequestException as e:
-            logger.error(f"Error creating one-off job: {response.text if response else str(e)}")
-            return [{"errors": str(response.text) if response else str(e)}]
+            error_detail = response.text if response is not None else str(e)
+            logger.error("Error creating one-off job: %s", error_detail)
+            return [{"errors": error_detail}]
     return job_data

@@ -157,3 +157,28 @@ def test_get_table_schema_strips_master_suffix(monkeypatch):
     rules = service.get_table_schema("orders_master")
 
     assert rules == {"attributes": {"path": "catalog/orders"}}
+
+
+def test_execute_query_denies_on_validation_error(monkeypatch):
+    """When validate_query raises ValueError, execute_query should deny (fail-closed)."""
+    async def raise_validation_error(*args, **kwargs):
+        raise ValueError("Sampling API key required")
+
+    monkeypatch.setattr(service, "validate_query", raise_validation_error)
+
+    def fail_get_auth_headers(*args, **kwargs):
+        pytest.fail("get_auth_headers should not be called when validation raises")
+
+    monkeypatch.setattr(service, "get_auth_headers", fail_get_auth_headers)
+
+    def fail_post(*args, **kwargs):
+        pytest.fail("execute_query should not perform HTTP request on validation error")
+
+    monkeypatch.setattr(service.requests, "post", fail_post)
+
+    result = asyncio.run(service.execute_query("select 1", "acc", ctx=object()))
+
+    assert len(result) == 1
+    assert "error" in result[0]
+    assert "Query validation unavailable" in result[0]["error"]
+    assert result[0]["validation"] == "unavailable"
