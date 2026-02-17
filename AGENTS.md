@@ -2,7 +2,7 @@
 
 > **Audience**: LLM-driven engineering agents and human developers
 
-The Openbridge MCP Server is a FastMCP-based server enabling LLMs to interact with the Openbridge platform APIs. This guide covers development workflows, testing, and contribution standards for Python ≥3.10.
+The Openbridge MCP Server is a FastMCP-based server enabling LLMs to interact with the Openbridge platform APIs. This guide covers development workflows, testing, and contribution standards for Python ≥3.13.
 
 ## Required Development Workflow
 
@@ -37,7 +37,7 @@ Alternative quick check: `make all` runs lint + check + test in sequence.
 | `tests/` | pytest suite mirroring `src/` layout |
 | `├─server/tools/` | Tool-specific tests with mocked HTTP |
 | `Makefile` | Development commands (setup, test, lint, serve) |
-| `.github/workflows/` | CI/CD automation (matrix testing on 3.10.15 & 3.12.7) |
+| `.github/workflows/` | CI/CD automation (Python 3.13) |
 
 ## Adding New Tools
 
@@ -254,7 +254,7 @@ def test_create_job_success():
 - Follow PEP 8 with 4-space indentation
 - Type hints on all function signatures
 - Concise docstrings as in `src/models/base_models.py`
-- Python ≥3.10 required (CI tests 3.10.15 and 3.12.7)
+- Python ≥3.13 required (CI tests Python 3.13)
 
 ### Naming Conventions
 
@@ -305,7 +305,7 @@ def test_create_job_success():
 
 ### CI/CD
 
-- CI runs matrix testing on Python 3.10.15 and 3.12.7
+- CI runs on Python 3.13
 - All checks must pass: lint (ruff), static check (compileall), tests (pytest)
 - Never amend commits just to fix linting - make a new commit
 
@@ -375,7 +375,7 @@ Before approving, ask:
 
 ## FastMCP Compatibility
 
-- The repo currently uses `fastmcp>=2.13.1` (see `requirements.txt`)
+- The repo currently uses `fastmcp>=2.14` (see `requirements.txt`)
 - Context state API: Native `ctx.set_state()` and `ctx.get_state()` available
 - Compatibility shim in `src/auth/authentication.py:19-31` handles older FastMCP releases gracefully
 - If you upgrade FastMCP, update this section and verify middleware, context state, and tool contracts still work
