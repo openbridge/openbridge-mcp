@@ -9,7 +9,7 @@ from typing import Iterable, List
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
-from .simple import OpenbridgeAuth, get_auth
+from .simple import OpenbridgeAuth, get_auth, is_refresh_token
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,19 @@ def create_openbridge_config() -> AuthConfig:
 
 
 class OpenbridgeAuthMiddleware(Middleware):
-    """Fetches a JWT from Openbridge and shares it with the FastMCP context."""
+    """Extracts or exchanges tokens and shares the resulting JWT with the FastMCP context.
+
+    Supports two client-side token formats:
+
+    * **Refresh token** (``xxx:yyy``): The middleware exchanges it for a
+      short-lived JWT via the Openbridge auth API, caching the result so
+      repeated tool calls within the same session are fast.
+    * **JWT** (three dot-separated segments): Used as-is — no exchange
+      required.
+
+    When no client token is present the middleware falls back to the
+    server-side ``OPENBRIDGE_REFRESH_TOKEN`` environment variable.
+    """
 
     def __init__(self, auth: OpenbridgeAuth):
         super().__init__()
@@ -62,11 +74,12 @@ class OpenbridgeAuthMiddleware(Middleware):
             http_request = get_http_request()
             if http_request:
                 auth_header = http_request.headers.get("authorization", "")
-                if auth_header.startswith("Bearer "):
-                    jwt_token = auth_header[7:].strip()
-                    logger.debug("Using client-provided Bearer token (length: %d)", len(jwt_token))
+                if auth_header.lower().startswith("bearer "):
+                    client_token = auth_header.split(" ", 1)[1].strip()
+                    if client_token:
+                        jwt_token = self._resolve_client_token(client_token)
         except Exception as exc:
-            logger.debug("Could not extract client Authorization header: %s", exc)
+            logger.warning("Could not extract client Authorization header: %s", exc)
 
         # Priority 2: Fall back to server's refresh token
         if not jwt_token:
@@ -84,6 +97,20 @@ class OpenbridgeAuthMiddleware(Middleware):
 
         return await call_next(context)
 
+    def _resolve_client_token(self, token: str) -> str:
+        """Turn a client-provided token into a usable JWT.
+
+        If the token looks like an Openbridge refresh token (``xxx:yyy``)
+        it is exchanged for a JWT via the auth API.  Otherwise it is
+        assumed to already be a JWT and is returned as-is.
+        """
+        if is_refresh_token(token):
+            logger.debug("Client token is a refresh token — exchanging for JWT")
+            return self._auth.exchange_token(token)
+
+        logger.debug("Client token appears to be a JWT — using directly (length: %d)", len(token))
+        return token
+
 
 def create_auth_middleware(
     config: AuthConfig,
@@ -93,10 +120,11 @@ def create_auth_middleware(
 ) -> List[Middleware]:
     """Return the middleware stack used by :mod:`src.server.mcp_server`.
 
-    The historic implementation returned multiple middleware instances for
-    refresh-token conversion and JWT validation.  We only need to ensure the
-    Openbridge JWT is cached and injected into the FastMCP context now, so the
-    stack consists of a single ``OpenbridgeAuthMiddleware`` instance.
+    The middleware detects whether a client-provided Bearer token is a
+    refresh token or an already-exchanged JWT.  Refresh tokens are
+    converted to JWTs via the Openbridge auth API; JWTs are passed
+    through unchanged.  When no client token is present the server's
+    ``OPENBRIDGE_REFRESH_TOKEN`` is used as a fallback.
     """
     if not config.enabled:
         return []

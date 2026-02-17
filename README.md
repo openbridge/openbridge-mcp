@@ -18,7 +18,7 @@ If you need as Intel/AMD compatable environment, you can build for both like thi
 As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
 
 1. Create a `.env` in the project's root folder (see Variables below). At minimum set `MCP_PORT`. Optionally set `OPENBRIDGE_REFRESH_TOKEN` for server-side authentication (clients can also provide tokens via Authorization headers).
-2. Run the command `uv venv --python 3.12.7 && uv pip install -r requirements.txt`
+2. Run the command `uv venv --python 3.13 && uv pip install -r requirements.txt`
 3. Start the server:
    - Python: `python main.py`
    - The server listens on `0.0.0.0:${MCP_PORT}` using HTTP transport.
