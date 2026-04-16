@@ -37,6 +37,12 @@ Required for server and tools to function. Values typically point to your enviro
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint for query validation.
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Explicitly opt in to sending SQL text to the configured OpenAI-compatible endpoint for validation. When disabled the server uses heuristics only.
+- Code Mode (default on)
+  - `CODE_MODE` (optional, default `true`): Enables FastMCP Code Mode as the standard MCP surface.
+  - `CODE_MODE_INCLUDE_TAGS` (optional, default `true`): Include `tags` discovery meta-tool in code mode.
+  - `CODE_MODE_MAX_DURATION_SECS` (optional, default `30`): Sandbox execution timeout for `execute`.
+  - `CODE_MODE_MAX_MEMORY` (optional, default `50000000`): Sandbox memory limit in bytes for `execute`.
+  - Dependency note: Code mode requires `fastmcp[code-mode]` (includes sandbox dependencies such as pydantic-monty).
 
 Example `.env` template:
 ```bash
@@ -54,6 +60,9 @@ OPENBRIDGE_ENABLE_LLM_VALIDATION=false
 FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
 # or use OPENAI_API_KEY if you prefer
 # OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
+
+# Code mode (default true). Set false to expose full direct tool catalog.
+CODE_MODE=true
 ```
 
 ### Client configuration (example)
@@ -83,6 +92,16 @@ Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. B
 For more information about getting connected with Claude Desktop, visit the [**modelcontextprotocol** official documentation](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
 ### Tools exposed
+By default (`CODE_MODE=true`), FastMCP Code Mode is active and clients typically see meta-tools like `search`, `get_schema`/`get_schemas`, and `execute` (plus `tags` when enabled).  
+Set `CODE_MODE=false` to opt out and expose the direct tool catalog documented below.
+
+See [docs/tool-coverage-matrix.md](docs/tool-coverage-matrix.md) for endpoint-family coverage status and planned phases.
+
+- Capabilities
+  - `get_capabilities`
+    - Returns currently enabled and disabled tools, required environment variables, and opt-in behavior for query validation.
+    - Example LLM request: `Show current MCP capabilities and why any tools are disabled`
+
 - Remote identity - see [our documentation](https://docs.openbridge.com/en/articles/3673866-understanding-remote-identities) for more information.
   - `get_remote_identities`
     - Lists every remote identity linked to the current token, with an optional `remote_identity_type` filter if you only need one integration.
@@ -91,13 +110,14 @@ For more information about getting connected with Claude Desktop, visit the [**m
     - Retrieves a single remote identity by ID and flattens the nested `attributes` into top-level keys for easier prompting.
     - Example LLM request: `Fetch remote identity 12345 and show the flattened attributes`
 
-- Query (AI-powered validation - requires OpenAI API key)
-  - **Note**: Both query tools require `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` to be configured. These tools use AI-powered sampling to intelligently validate SQL queries and ensure best practices. See the [OpenAI Platform documentation](https://platform.openai.com/docs/api-reference/introduction) to obtain an API key. Without an API key configured, these tools will not be available.
+- Query (heuristics by default, optional LLM validation)
+  - **Availability**: Both query tools require `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` to be configured.
+  - **Opt-in behavior**: Set `OPENBRIDGE_ENABLE_LLM_VALIDATION=true` to allow SQL text to be sent to the configured OpenAI-compatible endpoint. By default (`false`), validation is heuristic-only and SQL is not sent to an LLM.
   - `validate_query`
-    - Uses AI-powered sampling to analyze SQL queries for safety and best practices. Confirms queries are read-only, contain proper `LIMIT` clauses, and follow security guidelines. Pass `allow_unbounded=True` to explicitly permit queries without `LIMIT` clauses.
+    - Validates SQL safety and best practices. Uses heuristics in default mode and optional LLM analysis when explicitly enabled. Pass `allow_unbounded=True` to permit queries without `LIMIT` clauses.
     - Example LLM request: `Validate this SQL against key finance and confirm it has a LIMIT 25`
   - `execute_query`
-    - First validates the SQL query using AI-powered sampling, then executes it through the Openbridge Service API. Requires both `OPENBRIDGE_REFRESH_TOKEN` and an OpenAI API key. Override validation safeguards with `allow_unbounded=True` only when you intend to run queries without a `LIMIT`.
+    - First validates SQL, then executes it through the Openbridge Service API. Requires authentication plus query tool availability. Override validation safeguards with `allow_unbounded=True` only when you intend to run queries without a `LIMIT`.
     - Example LLM request: `Execute the validated SQL on key merchandising with LIMIT 100`
 
 - Rules - see [our data catalog documentation](https://docs.openbridge.com/en/articles/2247373-data-catalog-how-we-organize-and-manage-data-in-your-data-lake-or-cloud-warehouse) for more information.
@@ -125,6 +145,15 @@ For more information about getting connected with Claude Desktop, visit the [**m
   - `get_jobs`
     - Returns jobs scoped to a subscription with optional status and primary flags so you can inspect running or historical syncs.
     - Example LLM request: `List active primary jobs for subscription 987`
+  - `get_job_by_id`
+    - Returns a single job by ID for targeted status or diagnostics.
+    - Example LLM request: `Fetch job 123456`
+  - `get_history_by_id`
+    - Returns a single history transaction by history ID.
+    - Example LLM request: `Fetch history transaction 424242`
+  - `update_history_status`
+    - Updates a history transaction status value.
+    - Example LLM request: `Set history transaction 424242 status to cancelled`
   - `create_job`
     - Schedules one-off (historical) jobs for the subscription using ISO date strings and stage IDs that you can source from `get_product_stage_ids`.
     - Example LLM request: `Create one-off jobs for subscription 987 from 2024-01-01 to 2024-01-07 using stage ids [12, 34]`
@@ -133,6 +162,18 @@ For more information about getting connected with Claude Desktop, visit the [**m
   - `get_subscriptions`
     - Lists all subscriptions for the current user with pagination support. Returns subscription details including product IDs, status, and metadata.
     - Example LLM request: `Show me all my subscriptions`
+  - `get_subscription_by_id`
+    - Retrieves one subscription by ID.
+    - Example LLM request: `Show subscription 128853`
+  - `create_subscription`
+    - Creates a subscription with JSON:API attributes.
+    - Example LLM request: `Create a subscription with these attributes: {...}`
+  - `update_subscription`
+    - Updates an existing subscription with JSON:API attributes.
+    - Example LLM request: `Update subscription 128853 with these attributes: {...}`
+  - `cancel_subscription`
+    - Cancels a subscription by setting status to `cancelled`.
+    - Example LLM request: `Cancel subscription 128853`
   - `get_storage_subscriptions`
     - Lists active storage subscriptions linked to the current account. Returns storage-specific subscription details.
     - Example LLM request: `List my storage subscriptions`
@@ -268,8 +309,10 @@ MCP: Calls execute_query(query="SELECT * FROM orders_master... LIMIT 100",
   - **Priority**: Client-provided tokens take precedence over server tokens. If neither is provided, API calls fail with `401`.
   - The server starts successfully even without `OPENBRIDGE_REFRESH_TOKEN`, enabling pure client-side authentication deployments.
 - Query validation (AI-powered)
-  - The `validate_query` and `execute_query` tools use AI-powered sampling via the OpenAI API to intelligently analyze SQL queries for safety issues, best practices violations, and potential security concerns.
+  - The `validate_query` and `execute_query` tools always run heuristic validation when available.
   - These tools are only available when `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` is configured in your environment.
+  - LLM-assisted validation is opt-in only and requires `OPENBRIDGE_ENABLE_LLM_VALIDATION=true`.
+  - With opt-in enabled, SQL text may be sent to your configured OpenAI-compatible endpoint.
   - The AI validation checks for: read-only operations, proper LIMIT clauses, suspicious patterns, and SQL injection risks.
   - Get your API key from the [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
   - Cost consideration: Query validation typically uses the `gpt-4o-mini` model (configurable via `FASTMCP_SAMPLING_MODEL`), which is cost-effective for this use case.

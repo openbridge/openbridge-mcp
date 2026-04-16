@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
+import os
+from inspect import isawaitable
 from dataclasses import dataclass
 from typing import Iterable, List
 
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
+from .session_state import set_request_jwt
 from .simple import OpenbridgeAuth, get_auth, is_refresh_token
 
 logger = logging.getLogger(__name__)
@@ -17,7 +20,7 @@ JWT_CONTEXT_ATTR = "_openbridge_jwt"
 JWT_PUBLIC_ATTR = "jwt_token"
 
 
-def _set_context_state(ctx, key: str, value: str) -> None:
+async def _set_context_state(ctx, key: str, value: str) -> None:
     """Best-effort state setter compatible with older FastMCP releases."""
     if not ctx:
         return
@@ -25,7 +28,9 @@ def _set_context_state(ctx, key: str, value: str) -> None:
     setter = getattr(ctx, "set_state", None)
     if callable(setter):
         try:
-            setter(key, value)
+            maybe_awaitable = setter(key, value)
+            if isawaitable(maybe_awaitable):
+                await maybe_awaitable
         except Exception:  # pragma: no cover - defensive
             logger.debug("Context set_state unavailable, falling back to attrs")
 
@@ -34,14 +39,27 @@ def _set_context_state(ctx, key: str, value: str) -> None:
 
 @dataclass
 class AuthConfig:
-    """Minimal configuration toggle for Openbridge authentication."""
+    """Configuration for Openbridge authentication."""
 
     enabled: bool = True
+    refresh_token_enabled: bool = True
+    jwt_validation_enabled: bool = True
+    jwt_verify_signature: bool = True
 
 
 def create_openbridge_config() -> AuthConfig:
-    """Return an ``AuthConfig`` with Openbridge auth enabled."""
-    return AuthConfig(enabled=True)
+    """Return an AuthConfig, reading AUTH_ENABLED from the environment.
+
+    When AUTH_ENABLED is set to 'false' (case-insensitive), authentication
+    middleware is disabled. Used for local development and testing.
+    """
+    enabled = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+    return AuthConfig(
+        enabled=enabled,
+        refresh_token_enabled=enabled,
+        jwt_validation_enabled=enabled,
+        jwt_verify_signature=True,
+    )
 
 
 class OpenbridgeAuthMiddleware(Middleware):
@@ -90,10 +108,16 @@ class OpenbridgeAuthMiddleware(Middleware):
                 # Debug level: Some MCP endpoints (health, list tools) don't require auth
                 logger.debug("No authentication configured (neither client token nor server refresh token)")
 
-        # Share JWT with downstream tooling if available
+        # Share JWT with downstream tooling if available.
+        # Uses both FastMCP context state *and* a ContextVar so tools
+        # invoked from Code Mode's sandbox (which receive a fresh
+        # Context instance) can still see the resolved token.
         if jwt_token:
-            _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
-            _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
+            set_request_jwt(jwt_token)
+            await _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
+            await _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
+        else:
+            set_request_jwt(None)
 
         return await call_next(context)
 

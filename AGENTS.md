@@ -158,6 +158,12 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Opt-in to send SQL to LLM
     - When disabled, uses heuristics only (no SQL leaves your environment)
 
+- **Code Mode (default enabled)**
+  - `CODE_MODE` (optional, default `true`): Enables FastMCP code mode as the standard MCP surface (`search`/`get_schema`/`execute`)
+  - `CODE_MODE_INCLUDE_TAGS` (optional, default `true`): Adds `tags` discovery meta-tool
+  - `CODE_MODE_MAX_DURATION_SECS` (optional, default `30`): Sandbox execution timeout for `execute`
+  - `CODE_MODE_MAX_MEMORY` (optional, default `50000000`): Sandbox memory limit in bytes for `execute`
+
 - **Service API Base URLs** (see README.md for full list)
   - `SERVICE_API_BASE_URL`
   - `REMOTE_IDENTITY_API_BASE_URL`
@@ -375,7 +381,7 @@ Before approving, ask:
 
 ## FastMCP Compatibility
 
-- The repo currently uses `fastmcp>=2.14` (see `requirements.txt`)
+- The repo currently uses `fastmcp>=3.1.0` (see `requirements.txt`)
 - Context state API: Native `ctx.set_state()` and `ctx.get_state()` available
 - Compatibility shim in `src/auth/authentication.py:19-31` handles older FastMCP releases gracefully
 - If you upgrade FastMCP, update this section and verify middleware, context state, and tool contracts still work
@@ -385,7 +391,7 @@ Before approving, ask:
 - Never commit secrets to version control (`.env` is in `.gitignore`)
 - Validate all external inputs (see `src/utils/security.py`)
 - Use `safe_pagination_url()` for untrusted pagination links (prevents SSRF)
-- JWT signatures are always verified (`jwt_verify_signature=True` in auth config)
+- Client JWTs are passed through by middleware; token signature and authorization checks are enforced by downstream Openbridge APIs
 - Query validation tools prevent SQL injection via LLM sampling + heuristics
 - Set `OPENBRIDGE_ENABLE_LLM_VALIDATION=false` if SQL must not leave your environment
 

@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 
+import pytest
+import requests as _requests
+
 from src.server.tools import remote_identity
 
 
@@ -34,6 +37,27 @@ def test_get_remote_identities_paginates(monkeypatch):
     assert identities == [{"id": "ri-1"}, {"id": "ri-2"}]
 
 
+def test_get_remote_identities_uses_correct_type_param(monkeypatch):
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    captured = {}
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"data": [], "links": {"next": None}},
+        )
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    remote_identity.get_remote_identities(remote_identity_type_id="14")
+
+    assert captured["url"].endswith("/ri?page=1")
+    assert captured["params"] == {"remote_identity_type": "14"}
+
+
 def test_get_remote_identities_stops_on_failure(monkeypatch):
     monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -51,7 +75,7 @@ def test_get_remote_identity_by_id_success(monkeypatch):
     monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None, timeout=None):
-        assert url.endswith("/sri/42")
+        assert url.endswith("/ri/42")
         return SimpleNamespace(
             status_code=200,
             json=lambda: {
@@ -81,3 +105,156 @@ def test_get_remote_identity_by_id_not_found(monkeypatch):
     identity = remote_identity.get_remote_identity_by_id("missing")
 
     assert identity == {"error": "Remote identity missing not found."}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b — error path coverage for remote_identity
+#
+# Contract (docs/tool-contracts.md):
+# - RequestException → never propagates, always returns a typed shape.
+# - Malformed 200 responses (missing attributes, wrong types, empty data)
+#   must never crash — always return the not-found shape or partial list.
+# - Pagination is partial-results: a mid-stream failure returns rows
+#   collected so far, not [].
+# ---------------------------------------------------------------------------
+
+
+def test_get_remote_identities_returns_partial_on_request_exception(monkeypatch):
+    """REGRESSION guard for the partial-results contract: if page 2 of a
+    paginated response raises, the rows from page 1 must still come back."""
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    responses = [
+        SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "data": [{"id": "ri-1"}, {"id": "ri-2"}],
+                "links": {"next": "https://remote-identity.api.openbridge.io/ri?page=2"},
+            },
+        ),
+    ]
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        if responses:
+            return responses.pop(0)
+        raise _requests.ConnectionError("upstream died mid-pagination")
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    identities = remote_identity.get_remote_identities()
+
+    # Contract: return the two rows we collected, don't raise or return [].
+    assert identities == [{"id": "ri-1"}, {"id": "ri-2"}]
+
+
+def test_get_remote_identities_network_failure_on_first_page(monkeypatch):
+    """RequestException on the very first page returns [] without raising."""
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        raise _requests.Timeout("too slow")
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    assert remote_identity.get_remote_identities() == []
+
+
+def test_get_remote_identities_returns_partial_on_non_json(monkeypatch):
+    """Non-JSON body mid-pagination is treated as end-of-stream (returns
+    whatever was collected before the bad page)."""
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    responses = [
+        SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "data": [{"id": "ri-1"}],
+                "links": {"next": "https://remote-identity.api.openbridge.io/ri?page=2"},
+            },
+        ),
+        SimpleNamespace(
+            status_code=200,
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        ),
+    ]
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return responses.pop(0)
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    assert remote_identity.get_remote_identities() == [{"id": "ri-1"}]
+
+
+def test_get_remote_identity_by_id_network_failure_returns_error_shape(monkeypatch):
+    """RequestException returns a structured error shape, never propagates."""
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        raise _requests.ConnectionError("host unreachable")
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    result = remote_identity.get_remote_identity_by_id("42")
+
+    assert result["error"] == "Remote identity 42 lookup failed"
+    assert "host unreachable" in result["details"]
+
+
+def test_get_remote_identity_by_id_empty_data_returns_not_found(monkeypatch):
+    """REGRESSION: the user-reported malformed-payload crash. Empty `data`
+    must not trigger `KeyError` on `data['attributes']`."""
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(status_code=200, json=lambda: {"data": {}})
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    assert remote_identity.get_remote_identity_by_id("42") == {
+        "error": "Remote identity 42 not found."
+    }
+
+
+def test_get_remote_identity_by_id_non_json_returns_not_found(monkeypatch):
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    assert remote_identity.get_remote_identity_by_id("42") == {
+        "error": "Remote identity 42 not found."
+    }
+
+
+# Representative (not exhaustive) malformed-payload shapes. Per the plan,
+# cap at 3-5 per tool.
+@pytest.mark.parametrize(
+    "payload,scenario",
+    [
+        ({"data": None}, "data is None"),
+        ({"data": {"id": "42"}}, "missing attributes key"),
+        ({"data": {"id": "42", "attributes": None}}, "attributes is None"),
+        ({"data": {"id": "42", "attributes": "a-string"}}, "attributes wrong type"),
+        ({"data": "not-a-dict"}, "data wrong type"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "payload",
+)
+def test_get_remote_identity_by_id_malformed_shapes_return_not_found(
+    monkeypatch, payload, scenario
+):
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(status_code=200, json=lambda: payload)
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    assert remote_identity.get_remote_identity_by_id("42") == {
+        "error": "Remote identity 42 not found."
+    }, f"scenario: {scenario}"

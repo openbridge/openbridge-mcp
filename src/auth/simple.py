@@ -12,6 +12,7 @@ import jwt
 import requests
 
 DEFAULT_CONNECT_TIMEOUT = 10
+DEFAULT_READ_TIMEOUT = 30
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,36 @@ class AuthenticationError(RuntimeError):
     """Raised when Openbridge authentication fails."""
 
 
+def _parse_read_timeout() -> int:
+    """Parse OPENBRIDGE_API_TIMEOUT once at import, falling back on bad input.
+
+    A malformed value must not raise on every HTTP call — boot-time config
+    errors should degrade gracefully to the default rather than causing
+    500s across every tool.
+    """
+    raw = os.getenv("OPENBRIDGE_API_TIMEOUT")
+    if raw is None:
+        return DEFAULT_READ_TIMEOUT
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "OPENBRIDGE_API_TIMEOUT=%r is not an integer; falling back to default %d",
+            raw,
+            DEFAULT_READ_TIMEOUT,
+        )
+        return DEFAULT_READ_TIMEOUT
+
+
+_CACHED_READ_TIMEOUT: int = _parse_read_timeout()
+
+
 def get_api_timeout() -> Tuple[int, int]:
-    """Return the (connect, read) timeout tuple for Openbridge HTTP calls."""
-    read_timeout = int(os.getenv("OPENBRIDGE_API_TIMEOUT", "30"))
-    return DEFAULT_CONNECT_TIMEOUT, read_timeout
+    """Return the (connect, read) timeout tuple for Openbridge HTTP calls.
+
+    Values are parsed once at import; see ``_parse_read_timeout``.
+    """
+    return DEFAULT_CONNECT_TIMEOUT, _CACHED_READ_TIMEOUT
 
 
 def is_refresh_token(token: str) -> bool:

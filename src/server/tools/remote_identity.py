@@ -30,21 +30,30 @@ def get_remote_identities(
     headers = get_auth_headers(ctx)
 
     if remote_identity_type_id:
-        params['type'] = remote_identity_type_id
+        params['remote_identity_type'] = remote_identity_type_id
     next_page_url = f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page=1"
     while next_page_url:
-        response = requests.get(
-            next_page_url,
-            params=params,
-            headers=headers,
-            timeout=get_api_timeout(),
-        )
+        try:
+            response = requests.get(
+                next_page_url,
+                params=params,
+                headers=headers,
+                timeout=get_api_timeout(),
+            )
+        except requests.RequestException as exc:
+            logger.warning("Remote identities request failed: %s", exc)
+            break
         if response.status_code == 200:
-            ris = response.json().get("data", [])
+            try:
+                payload = response.json()
+            except ValueError:
+                logger.warning("Remote identities returned non-JSON body")
+                break
+            ris = payload.get("data", []) if isinstance(payload, dict) else []
             remote_identities.extend(ris)
             logger.debug(f"Retrieved {len(ris)} remote identities")
             next_page_url = safe_pagination_url(
-                response.json().get('links', {}).get('next', None),
+                (payload.get('links', {}) if isinstance(payload, dict) else {}).get('next', None),
                 REMOTE_IDENTITY_API_BASE_URL,
             )
         else:
@@ -65,18 +74,39 @@ def get_remote_identity_by_id(
         dict: The remote identity data if found, or an error message otherwise.
     """
     headers = get_auth_headers(ctx)
-    response = requests.get(
-        f"{REMOTE_IDENTITY_API_BASE_URL}/sri/{remote_identity_id}",
-        headers=headers,
-        timeout=get_api_timeout(),
-    )
-    if response.status_code == 200:
-        remote_identity = response.json().get("data", {})
-        logger.debug(f"Retrieved remote identity {remote_identity_id}: {remote_identity}")
-        for key in remote_identity['attributes']:
-            remote_identity[key] = remote_identity['attributes'][key]
-        del remote_identity['attributes']
-        return remote_identity
-    else:
+    try:
+        response = requests.get(
+            f"{REMOTE_IDENTITY_API_BASE_URL}/ri/{remote_identity_id}",
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Remote identity %s lookup failed: %s", remote_identity_id, exc)
+        return {"error": f"Remote identity {remote_identity_id} lookup failed", "details": str(exc)}
+    if response.status_code != 200:
         logger.warning(f"Failed to retrieve remote identity {remote_identity_id}: {response.status_code}")
         return {"error": f"Remote identity {remote_identity_id} not found."}
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.warning("Remote identity %s returned non-JSON body", remote_identity_id)
+        return {"error": f"Remote identity {remote_identity_id} not found."}
+    if not isinstance(payload, dict):
+        logger.warning("Remote identity %s payload is not an object", remote_identity_id)
+        return {"error": f"Remote identity {remote_identity_id} not found."}
+    remote_identity = payload.get("data") or {}
+    if not isinstance(remote_identity, dict) or not remote_identity:
+        logger.warning("Remote identity %s response had no data", remote_identity_id)
+        return {"error": f"Remote identity {remote_identity_id} not found."}
+    attributes = remote_identity.get("attributes")
+    if not isinstance(attributes, dict):
+        logger.warning(
+            "Remote identity %s response missing 'attributes'; returning not-found shape",
+            remote_identity_id,
+        )
+        return {"error": f"Remote identity {remote_identity_id} not found."}
+    logger.debug(f"Retrieved remote identity {remote_identity_id}: {remote_identity}")
+    for key, value in attributes.items():
+        remote_identity[key] = value
+    del remote_identity['attributes']
+    return remote_identity

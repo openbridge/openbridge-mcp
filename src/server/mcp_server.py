@@ -1,4 +1,5 @@
 import os
+from importlib.metadata import PackageNotFoundError, version
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from starlette.responses import JSONResponse
@@ -12,13 +13,38 @@ from src.server.tools import healthchecks as healthchecks_tools  # noqa: E402
 from src.server.tools import jobs as jobs_tools  # noqa: E402
 from src.server.tools import products as products_tools  # noqa: E402
 from src.server.tools import subscriptions as subscriptions_tools  # noqa: E402
+from src.server.tools import capabilities as capabilities_tools  # noqa: E402
+from src.server.tools.tool_manifest import TOOL_MANIFEST  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
 from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
 from src.auth.manager import get_auth_manager  # noqa: E402
+from src.server.code_mode import create_code_mode_transform, is_code_mode_enabled  # noqa: E402
 from src.server.sampling import create_sampling_handler  # noqa: E402
 
 
 logger = get_logger("mcp_server")
+
+
+def _get_service_version() -> str:
+    """Return installed package version for health endpoint reporting."""
+    try:
+        return version("openbridge-mcp")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _log_capability_summary() -> None:
+    capabilities = capabilities_tools.build_capabilities()
+    summary = capabilities["summary"]
+    runtime = capabilities["runtime"]
+    logger.info(
+        "Capability summary: enabled=%s disabled=%s sampling_key_present=%s llm_validation_enabled=%s code_mode_enabled=%s",
+        summary["enabled_tools"],
+        summary["disabled_tools"],
+        runtime["sampling_key_present"],
+        runtime["llm_validation_enabled"],
+        runtime["code_mode_enabled"],
+    )
 
 def create_mcp_server() -> FastMCP:
     """Create and configure the MCP server."""
@@ -26,10 +52,6 @@ def create_mcp_server() -> FastMCP:
 
     # Configure JWT middleware
     auth_cfg = create_openbridge_config()
-    auth_cfg.enabled = True
-    auth_cfg.refresh_token_enabled = True
-    auth_cfg.jwt_validation_enabled = True
-    auth_cfg.jwt_verify_signature = True  # SECURITY: Always verify JWT signatures
     auth_manager = get_auth_manager()
     middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
 
@@ -44,104 +66,54 @@ def create_mcp_server() -> FastMCP:
     for mw in middleware:
         mcp.add_middleware(mw)
 
+    registered_tool_names = set()
+
+    def register_tool(name: str, func):
+        mcp.tool(
+            name=name,
+            description=TOOL_MANIFEST[name]["description"],
+        )(func)
+        registered_tool_names.add(name)
+
     # Register tools
+    register_tool(
+        "get_capabilities",
+        lambda: capabilities_tools.build_capabilities(registered_tool_names),
+    )
     # Remote identity tools
-    mcp.tool(
-        name='get_remote_identities',
-        description='Retrieve remote identities for the current user. Returns list of remote identity names.',
-    )(remote_identity_tools.get_remote_identities)
-    mcp.tool(
-        name='get_remote_identity_by_id',
-        description='Retrieve a specific remote identity by its ID. Returns remote identity details if found.',
-    )(remote_identity_tools.get_remote_identity_by_id)
+    register_tool("get_remote_identities", remote_identity_tools.get_remote_identities)
+    register_tool("get_remote_identity_by_id", remote_identity_tools.get_remote_identity_by_id)
     # Service Tools
     # Query validation tools require an API key for LLM sampling
     has_sampling_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
     if has_sampling_key:
-        mcp.tool(
-            name='validate_query',
-            description='Analyze SQL with sampling, requiring a LIMIT unless allow_unbounded=True.',
-        )(service_tools.validate_query)
-        mcp.tool(
-            name='execute_query',
-            description='Validate then execute a SQL query; defaults to requiring LIMIT unless allow_unbounded=True.',
-        )(service_tools.execute_query)
+        register_tool("validate_query", service_tools.validate_query)
+        register_tool("execute_query", service_tools.execute_query)
     else:
         logger.info("Skipping SQL query tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
-    mcp.tool(
-        name='get_amazon_api_access_token',
-        description='Get the Amazon API access token for a given remote identity ID. Returns the access token if available.',
-    )(service_tools.get_amazon_api_access_token)
-    mcp.tool(
-        name='get_amazon_advertising_profiles',
-        description='List the Amazon Advertising profiles for a given remote identity ID. Returns a list of profiles.',
-    )(service_tools.get_amazon_advertising_profiles)
-    mcp.tool(
-        name='get_table_schema',
-        description='Get the schema/rules for a given table name from the rules API. Use table names from list_product_tables output. Returns the schema if found.',
-    )(service_tools.get_table_schema)
-    mcp.tool(
-        name='get_suggested_table_names',
-        description="""
-    Given a query string, obtain a list of possible table names from the rules API (through the service API).
-
-    Args:
-        query (str): The SQL query to analyze.
-    Returns:
-        Optional[List[str]] | str: A list of possible table names found from the query, or an error message if an invalid key is specified.
-    """,
-    )(service_tools.get_suggested_table_names)
+    register_tool("get_amazon_api_access_token", service_tools.get_amazon_api_access_token)
+    register_tool("get_amazon_advertising_profiles", service_tools.get_amazon_advertising_profiles)
+    register_tool("get_table_schema", service_tools.get_table_schema)
+    register_tool("get_suggested_table_names", service_tools.get_suggested_table_names)
     # Healthchecks Tools
-    mcp.tool(
-        name='get_healthchecks',
-        description='Get the healthchecks related to the current user. Returns a list of healthchecks.',
-    )(healthchecks_tools.get_healthchecks)
+    register_tool("get_healthchecks", healthchecks_tools.get_healthchecks)
     # Jobs tools
-    mcp.tool(
-        name='get_jobs',
-        description='Fetch jobs from the Openbridge API.',
-    )(jobs_tools.get_jobs)
-    mcp.tool(
-        name='create_job',
-        description='Create a job for a given subscription.',
-    )(jobs_tools.create_job)
+    register_tool("get_jobs", jobs_tools.get_jobs)
+    register_tool("get_job_by_id", jobs_tools.get_job_by_id)
+    register_tool("get_history_by_id", jobs_tools.get_history_by_id)
+    register_tool("update_history_status", jobs_tools.update_history_status)
+    register_tool("create_job", jobs_tools.create_job)
     # Subscriptions tools
-    mcp.tool(
-        name='get_subscriptions',
-        description='Get the subscriptions related to the current user. Returns a list of subscriptions.',
-    )(subscriptions_tools.get_subscriptions)
-    mcp.tool(
-        name='get_storage_subscriptions',
-        description='Get the storage subscriptions related to the current user. Returns a list of storage subscriptions.',
-    )(subscriptions_tools.get_storage_subscriptions)
+    register_tool("get_subscriptions", subscriptions_tools.get_subscriptions)
+    register_tool("get_subscription_by_id", subscriptions_tools.get_subscription_by_id)
+    register_tool("create_subscription", subscriptions_tools.create_subscription)
+    register_tool("update_subscription", subscriptions_tools.update_subscription)
+    register_tool("cancel_subscription", subscriptions_tools.cancel_subscription)
+    register_tool("get_storage_subscriptions", subscriptions_tools.get_storage_subscriptions)
     # Products tools
-    mcp.tool(
-        name='get_product_stage_ids',
-        description='Get the stage IDs for a specific product. Returns a list of stage IDs associated with the product.',
-    )(products_tools.get_product_stage_ids)
-    mcp.tool(
-        name='search_products',
-        description='''Search for Openbridge data products by name (fuzzy matching with ranking).
-
-Use broad search terms for best results - partial matches are ranked by relevance.
-Examples: "Amazon Ads", "Google Analytics", "Facebook", "Sponsored Products"
-
-Returns: List of matching products with id, name, and worker_name.
-Next step: Use product id with list_product_tables to see available tables.''',
-    )(products_tools.search_products)
-    mcp.tool(
-        name='list_product_tables',
-        description='''List all tables (data payloads) available for a specific product.
-
-Args:
-  - product_id: Product ID from search_products (required)
-  - subscription_id: Optional - filters tables to only those enabled for this subscription
-
-Returns: List of table objects with name, stage_id, and id fields.
-Next step: Use table name with get_table_schema to see column details and rules.
-
-Example workflow: search_products("Amazon Ads") → list_product_tables(50) → get_table_schema("amzn_ads_sp_campaigns")''',
-    )(products_tools.list_product_tables)
+    register_tool("get_product_stage_ids", products_tools.get_product_stage_ids)
+    register_tool("search_products", products_tools.search_products)
+    register_tool("list_product_tables", products_tools.list_product_tables)
 
     # Health check endpoint for monitoring and load balancers
     @mcp.custom_route("/health", methods=["GET"])
@@ -150,7 +122,24 @@ Example workflow: search_products("Amazon Ads") → list_product_tables(50) → 
         return JSONResponse({
             "status": "healthy",
             "service": "openbridge-mcp",
-            "version": "1.0.0"
+            "version": _get_service_version(),
         })
 
+    if is_code_mode_enabled():
+        try:
+            transform = create_code_mode_transform()
+            mcp.add_transform(transform)
+            logger.info(
+                "Code mode active: tool surface is meta-tools (search/get_schema/execute). Set CODE_MODE=false to opt out."
+            )
+        except ImportError as exc:
+            logger.error(
+                "Code mode requested but dependencies are missing (%s). "
+                "Falling back to direct tool catalog. Install requirements with fastmcp[code-mode].",
+                exc,
+            )
+    else:
+        logger.info("Code mode disabled (CODE_MODE=false). Exposing direct tool catalog.")
+
+    _log_capability_summary()
     return mcp

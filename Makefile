@@ -15,7 +15,7 @@ install:  ## Install all dependencies (requires active venv)
 	uv pip install -e .
 
 test:  ## Run tests with pytest
-	AUTH_ENABLED=false pytest tests/ -v
+	AUTH_ENABLED=false uv run pytest tests/ -v
 
 lint:  ## Run linter (ruff) on src and tests
 	ruff check src/ tests/

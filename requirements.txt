@@ -1,4 +1,4 @@
-fastmcp>=2.14.5
+fastmcp[code-mode]>=3.1.0
 python-dotenv
 requests
 pydantic
