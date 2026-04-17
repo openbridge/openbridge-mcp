@@ -1,130 +1,146 @@
 """Structured logging configuration for the MCP Query Execution server."""
 
 import copy
+import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from src.utils.security import SanitizingFormatter
 
 
+_STANDARD_LOGRECORD_FIELDS = frozenset({
+    "name",
+    "msg",
+    "args",
+    "levelname",
+    "levelno",
+    "pathname",
+    "filename",
+    "module",
+    "lineno",
+    "funcName",
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "processName",
+    "process",
+    "getMessage",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "taskName",
+    "timestamp",
+    "message",
+})
+
+
 class StructuredFormatter(logging.Formatter):
-    """Custom formatter for structured logging with sanitization."""
+    """JSON formatter with sensitive-data sanitization.
+
+    Emits one JSON object per record on a single line so that log
+    aggregators (Datadog, Loki, CloudWatch, etc.) can parse records
+    without custom regex rules.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self._sanitizer = SanitizingFormatter("%(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record with structured data."""
         sanitized = copy.copy(record)
         if record.args:
             sanitized.args = copy.copy(record.args)
-        # Apply sanitization side effects.
         self._sanitizer.format(sanitized)
 
-        sanitized.timestamp = datetime.now(timezone.utc).isoformat()
-
-        structured_data = {
-            "timestamp": sanitized.timestamp,
+        payload: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": sanitized.levelname,
             "logger": sanitized.name,
             "message": sanitized.getMessage(),
         }
 
         if sanitized.exc_info:
-            structured_data["exception"] = self.formatException(sanitized.exc_info)
+            payload["exception"] = self.formatException(sanitized.exc_info)
 
         for key, value in sanitized.__dict__.items():
-            if key not in [
-                "name",
-                "msg",
-                "args",
-                "levelname",
-                "levelno",
-                "pathname",
-                "filename",
-                "module",
-                "lineno",
-                "funcName",
-                "created",
-                "msecs",
-                "relativeCreated",
-                "thread",
-                "threadName",
-                "processName",
-                "process",
-                "getMessage",
-                "exc_info",
-                "exc_text",
-                "stack_info",
-                "timestamp",
-            ]:
-                structured_data[key] = value
+            if key in _STANDARD_LOGRECORD_FIELDS or key.startswith("_"):
+                continue
+            payload[key] = _coerce_json_safe(value)
 
-        return f"{structured_data}"
+        return json.dumps(payload, default=str, ensure_ascii=False)
+
+
+def _coerce_json_safe(value: Any) -> Any:
+    """Best-effort conversion of arbitrary values into JSON-serialisable form."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_coerce_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _coerce_json_safe(v) for k, v in value.items()}
+    return repr(value)
 
 
 def setup_logging(
-    level: str = "DEBUG",
+    level: Optional[str] = None,
     log_file: Optional[Path] = None,
-    log_format: str = "structured"
+    log_format: Optional[str] = None,
 ) -> logging.Logger:
-    """Set up structured logging for the application.
-    
+    """Configure the application logger.
+
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file: Optional path to log file
-        log_format: Log format ("structured" or "simple")
-    
+        level: Logging level. Falls back to ``LOG_LEVEL`` env var, then ``INFO``.
+        log_file: Optional path to write logs to.
+        log_format: ``"structured"`` (JSON) or ``"simple"``. Falls back to
+            ``LOG_FORMAT`` env var, then ``"structured"``.
+
     Returns:
-        Configured logger instance
+        The configured application logger.
     """
-    # Create logger
+    resolved_level = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
+    resolved_format = (log_format or os.getenv("LOG_FORMAT", "structured")).lower()
+
+    try:
+        level_int = getattr(logging, resolved_level)
+    except AttributeError:
+        level_int = logging.INFO
+
     logger = logging.getLogger("mcp_query_execution")
-    logger.setLevel(logging.DEBUG)
-    
-    # Clear existing handlers
+    logger.setLevel(level_int)
     logger.handlers.clear()
-    
-    # Create formatter
-    if log_format == "structured":
-        formatter = StructuredFormatter()
+
+    if resolved_format == "structured":
+        formatter: logging.Formatter = StructuredFormatter()
     else:
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
-    
-    # Console handler
+
     console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(getattr(logging, level.upper()))
+    console_handler.setLevel(level_int)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-    
-    # File handler (if specified)
+
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(getattr(logging, level.upper()))
+        file_handler.setLevel(level_int)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    
+
     return logger
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a logger instance with the specified name.
-    
-    Args:
-        name: Logger name
-    
-    Returns:
-        Logger instance
-    """
+    """Return a namespaced child logger under ``mcp_query_execution``."""
     return logging.getLogger(f"mcp_query_execution.{name}")
 
 
-# Default logger setup
-default_logger = setup_logging() 
+default_logger = setup_logging()
+

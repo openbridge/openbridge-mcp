@@ -4,7 +4,10 @@ services:
     build: .
     platform: linux/amd64
     ports:
-      - "8002:8000"
+      # `main.py` binds to MCP_PORT inside the container, so both sides of
+      # the mapping follow the same env var. Dockerfile EXPOSE 8000 is
+      # purely informational and does not constrain the runtime bind port.
+      - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
     volumes:
       - type: bind
         source: .env

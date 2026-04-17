@@ -264,3 +264,64 @@ class TestGetJobs:
         result = jobs.update_history_status(42, "cancelled")
 
         assert result == {"id": 42, "status": "cancelled"}
+
+
+class TestJobsUrlDefault:
+    """Regression tests for the JOBS_API_BASE_URL default.
+
+    Earlier versions of this module shipped a default that already
+    included a trailing '/jobs', which the request-building code then
+    duplicated (`…/jobs/jobs/{id}`). These tests intentionally exercise
+    the *real* module-level default so a future reintroduction of a
+    trailing segment is caught without relying on monkeypatching.
+    """
+
+    def test_default_base_url_has_no_trailing_jobs_segment(self):
+        assert not jobs.JOBS_API_BASE_URL.rstrip("/").endswith("/jobs"), (
+            "JOBS_API_BASE_URL must not end with '/jobs' — request paths "
+            "append '/jobs' themselves; see src/server/tools/jobs.py."
+        )
+
+    def test_get_jobs_url_does_not_duplicate_jobs_segment(self, monkeypatch, mock_auth_headers):
+        captured_urls = []
+
+        def fake_get(url, headers=None, params=None, timeout=None):
+            captured_urls.append(url)
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {"data": []},
+            )
+
+        monkeypatch.setattr("src.server.tools.jobs.requests.get", fake_get)
+
+        jobs.get_jobs(subscription_id=123)
+
+        assert captured_urls, "get_jobs did not issue a request"
+        url = captured_urls[0]
+        assert "/jobs/jobs" not in url, (
+            f"URL contains duplicated '/jobs/jobs' segment: {url!r}"
+        )
+        assert url.endswith("/jobs")
+
+    def test_get_job_by_id_url_does_not_duplicate_jobs_segment(self, monkeypatch, mock_auth_headers):
+        captured_urls = []
+
+        def fake_get(url, headers=None, timeout=None):
+            captured_urls.append(url)
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {"data": {"id": 555}},
+            )
+
+        monkeypatch.setattr("src.server.tools.jobs.requests.get", fake_get)
+
+        jobs.get_job_by_id(555)
+
+        assert captured_urls, "get_job_by_id did not issue a request"
+        url = captured_urls[0]
+        assert "/jobs/jobs/" not in url, (
+            f"URL contains duplicated '/jobs/jobs/' segment: {url!r}"
+        )
+        assert url.endswith("/jobs/555")

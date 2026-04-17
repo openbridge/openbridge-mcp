@@ -148,8 +148,8 @@ async def validate_query(
                 parsed = json.loads(raw_text)
                 sampling_feedback["details"] = parsed
                 sampling_feedback["supported"] = True
-                sampling_allows = bool(parsed.get("allow", True)) and bool(
-                    parsed.get("read_only", True)
+                sampling_allows = bool(parsed.get("allow", False)) and bool(
+                    parsed.get("read_only", False)
                 )
             except json.JSONDecodeError:
                 sampling_feedback["error"] = "Sampling response was not valid JSON."

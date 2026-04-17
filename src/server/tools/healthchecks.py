@@ -67,39 +67,44 @@ def get_healthchecks(
         params["modified_at__lt"] = f"{filter_date}T23:59:59"
         params["page_size"] = HEALTHCHECKS_PAGE_SIZE
     
-    next_page = 1
+    next_page_url = f"{HC_BASE_URL}/{account_id}"
+    request_params = {**params, "page": 1}
+    page_count = 0
     healthchecks = []
-    while next_page:
-        params["page"] = next_page
+    while next_page_url and page_count < HEALTHCHECKS_MAX_PAGES:
+        page_count += 1
         response = requests.get(
-            f"{HC_BASE_URL}/{account_id}",
+            next_page_url,
             headers=headers,
-            params=params,
+            params=request_params,
             timeout=get_api_timeout(),
         )
+        request_params = None
         if response.status_code == 200:
             hcs = response.json().get("results", [])
             healthchecks.extend(hcs)
-            logger.debug(f"Fetched {len(hcs)} healthchecks from page {next_page}")
+            logger.debug("Fetched %d healthchecks from page %d", len(hcs), page_count)
             # Paginate if necessary
-            next_link = safe_pagination_url(
+            next_page_url = safe_pagination_url(
                 response.json().get('links', {}).get('next'),
                 HC_BASE_URL,
             )
-            if next_link:
-                next_page += 1
-                if next_page > HEALTHCHECKS_MAX_PAGES:
-                    logger.warning("Reached maximum number of pages for healthchecks.")
-                    break
-                logger.debug(f"Fetching page {next_page} of healthchecks")
+            if next_page_url:
+                logger.debug("Fetching next page of healthchecks: %s", next_page_url)
                 continue
-                # Continue fetching until no more pages or max pages reached
-            else:
-                logger.debug("No more pages of healthchecks to fetch")
-                break
-        else:
-            logger.error(f"Failed to retrieve healthchecks: {response.status_code} - {response.text}")
+            logger.debug("No more pages of healthchecks to fetch")
             break
-    
-    logger.debug(f"Retrieved {len(healthchecks)} healthchecks")
+        else:
+            logger.error(
+                "Failed to retrieve healthchecks: %s - %s",
+                response.status_code,
+                response.text,
+            )
+            break
+    if page_count >= HEALTHCHECKS_MAX_PAGES and next_page_url:
+        logger.warning(
+            "Reached maximum number of pages (%d) for healthchecks.",
+            HEALTHCHECKS_MAX_PAGES,
+        )
+    logger.debug("Retrieved %d healthchecks", len(healthchecks))
     return healthchecks

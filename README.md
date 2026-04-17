@@ -21,14 +21,18 @@ As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to cr
 2. Run the command `uv venv --python 3.13 && uv pip install -r requirements.txt`
 3. Start the server:
    - Python: `python main.py`
-   - The server listens on `0.0.0.0:${MCP_PORT}` using HTTP transport.
+   - The server listens on `${MCP_HOST:-0.0.0.0}:${MCP_PORT}` using HTTP transport.
 4. Connect from an MCP client.
 
 ### Environment variables (.env)
 Required for server and tools to function. Values typically point to your environment (dev/stage/prod) of Openbridge APIs.
 
 - Server
-  - `MCP_PORT` (default `8010`): Port for the HTTP MCP server.
+  - `MCP_PORT` (default `8000`): Port for the HTTP MCP server. The container exposes `8000` internally; `docker-compose.yml` publishes it as `${MCP_PORT:-8000}` on the host, so set `MCP_PORT` in `.env` if you need a different host port.
+  - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the MCP server.
+- Logging
+  - `LOG_LEVEL` (optional, default `INFO`): Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+  - `LOG_FORMAT` (optional, default `structured`): Log format (`structured` JSON or `simple` text).
 - Authentication
   - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication. When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
@@ -48,6 +52,7 @@ Example `.env` template:
 ```bash
 # Server settings
 MCP_PORT=8000
+# MCP_HOST=0.0.0.0
 
 # Authentication settings
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
@@ -63,6 +68,10 @@ FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
 
 # Code mode (default true). Set false to expose full direct tool catalog.
 CODE_MODE=true
+
+# Optional logging controls
+# LOG_LEVEL=INFO
+# LOG_FORMAT=structured
 ```
 
 ### Client configuration (example)

@@ -1,12 +1,8 @@
 import os
 from importlib.metadata import PackageNotFoundError, version
-from dotenv import load_dotenv
 from fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
-load_dotenv('./.env')
-
-# Imports below must come after load_dotenv() to ensure env vars are loaded
 from src.server.tools import remote_identity as remote_identity_tools  # noqa: E402
 from src.server.tools import service as service_tools  # noqa: E402
 from src.server.tools import healthchecks as healthchecks_tools  # noqa: E402

@@ -10,7 +10,7 @@ from .base import get_api_timeout, get_auth_headers
 
 logger = get_logger("jobs")
 
-JOBS_API_BASE_URL = os.getenv('JOBS_API_BASE_URL', 'https://service.api.openbridge.io/service/jobs/production/jobs')
+JOBS_API_BASE_URL = os.getenv('JOBS_API_BASE_URL', 'https://service.api.openbridge.io/service/jobs/production')
 HISTORY_API_BASE_URL = os.getenv("HISTORY_API_BASE_URL", "https://history.api.openbridge.io")
 
 
@@ -54,7 +54,7 @@ def get_jobs(
         response.raise_for_status()
         return response.json().get('data', [])
     except requests.RequestException as e:
-        logger.error(f"Error fetching jobs: {e}")
+        logger.error("Error fetching jobs: %s", e)
         return []
 
 
@@ -180,7 +180,7 @@ def create_job(
                     "start_date": date_start,
                     "end_date": date_end,
                     "stage_id": stage_id,
-                    "start_time": dt.strftime(dt.now(UTC) + td(minutes=5), "%Y-%m-%d %H:%M:%S")
+                    "start_time": (dt.now(UTC) + td(minutes=5)).isoformat()
                 }
             }
         }

@@ -140,6 +140,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
 
 - **Server**
   - `MCP_PORT` (default `8000`): Port for HTTP MCP server
+  - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the HTTP MCP server
 
 - **Authentication (Dual-Mode)**
   - `OPENBRIDGE_REFRESH_TOKEN` (optional): Token in format `xxx:yyy` for server-side authentication
@@ -163,6 +164,10 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
   - `CODE_MODE_INCLUDE_TAGS` (optional, default `true`): Adds `tags` discovery meta-tool
   - `CODE_MODE_MAX_DURATION_SECS` (optional, default `30`): Sandbox execution timeout for `execute`
   - `CODE_MODE_MAX_MEMORY` (optional, default `50000000`): Sandbox memory limit in bytes for `execute`
+
+- **Logging**
+  - `LOG_LEVEL` (optional, default `INFO`): Application log level
+  - `LOG_FORMAT` (optional, default `structured`): Log output format (`structured` JSON or `simple` text)
 
 - **Service API Base URLs** (see README.md for full list)
   - `SERVICE_API_BASE_URL`

@@ -34,14 +34,25 @@ class ValidationError(Exception):
         self.field = field
 
 
-# Patterns for sensitive data detection
+# Patterns for sensitive data detection.
+#
+# Each pattern matches the *entire* sensitive substring (label + value where
+# applicable). ``sanitize_string`` replaces only the matched substring, so
+# surrounding context in the message is preserved. The ``api_key`` pattern is
+# deliberately contextual: a bare high-entropy alphanumeric string (UUID,
+# account id, table name, etc.) must NOT be mistaken for a secret.
 SENSITIVE_PATTERNS = {
     "jwt_token": re.compile(
         r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
     ),
-    "bearer_token": re.compile(r"Bearer\s+[A-Za-z0-9_-]+", re.IGNORECASE),
-    "api_key": re.compile(r"[A-Za-z0-9]{32,}"),
+    "bearer_token": re.compile(r"Bearer\s+[A-Za-z0-9_.\-]+", re.IGNORECASE),
     "basic_auth": re.compile(r"Basic\s+[A-Za-z0-9+/=]+", re.IGNORECASE),
+    "api_key": re.compile(
+        r"(?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key"
+        r"|x[_-]api[_-]?key|client[_-]?secret|auth[_-]?token|refresh[_-]?token)"
+        r"\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{8,}['\"]?",
+        re.IGNORECASE,
+    ),
 }
 
 # Headers that should never be logged
@@ -78,26 +89,28 @@ XSS_PATTERNS = [
 
 
 def sanitize_string(value: str, partial: bool = False) -> str:
-    """Sanitize a string containing potential sensitive data.
+    """Redact sensitive tokens inside ``value`` while preserving context.
 
-    Removes or redacts sensitive information like JWT tokens,
-    API keys, and authentication headers from strings.
+    Each :data:`SENSITIVE_PATTERNS` entry is applied via :func:`re.sub`, so only
+    the matched substring is replaced. Surrounding log content (table names,
+    identifiers, error messages) is retained, which is critical for
+    observability.
 
-    :param value: String to sanitize
-    :type value: str
-    :param partial: If True, show length instead of full redaction
-    :type partial: bool
-    :return: Sanitized string with sensitive data redacted
-    :rtype: str
+    :param value: String to sanitize.
+    :param partial: If ``True``, replace each match with a length hint
+        (``<name:length=N>``) instead of ``<name:REDACTED>``.
+    :return: Sanitized string with any sensitive matches replaced in place.
     """
     if not value:
         return value
     for pattern_name, pattern in SENSITIVE_PATTERNS.items():
-        if pattern.search(value):
-            if partial and len(value) > 10:
-                return f"<{pattern_name}:length={len(value)}>"
-            else:
-                return f"<{pattern_name}:REDACTED>"
+        if partial:
+            def _replace(match: "re.Match[str]", name: str = pattern_name) -> str:
+                return f"<{name}:length={len(match.group(0))}>"
+
+            value = pattern.sub(_replace, value)
+        else:
+            value = pattern.sub(f"<{pattern_name}:REDACTED>", value)
     return value
 
 
@@ -257,13 +270,9 @@ class SanitizingFormatter(logging.Formatter):
                 # No args, just sanitize the message
                 record.msg = sanitize_string(str(record.msg))
 
-        except Exception as e:
-            # If sanitization fails, log the error and use original message
-            # This prevents the logging system from completely failing
-            import sys
-
-            print(
-                f"Warning: Failed to sanitize log record: {e}", file=sys.stderr
+        except Exception as exc:
+            sys.stderr.write(
+                f"[SanitizingFormatter] sanitization failed: {exc!r}\n"
             )
 
         return super().format(record)
