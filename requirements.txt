@@ -1,5 +1,0 @@
-fastmcp>=2.14.5
-python-dotenv
-requests
-pydantic
-PyJWT

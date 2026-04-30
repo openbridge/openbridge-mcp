@@ -58,12 +58,17 @@ def get_subscriptions(
     page_count = 0
     while next_page_url and page_count < SUBSCRIPTIONS_MAX_PAGES:
         page_count += 1
-        response = requests.get(
-            next_page_url,
-            headers=headers,
-            params=params,
-            timeout=get_api_timeout(),
-        )
+        try:
+            response = requests.get(
+                next_page_url,
+                headers=headers,
+                params=params,
+                timeout=get_api_timeout(),
+            )
+        except requests.RequestException as exc:
+            # Fail-fast: subscription lists are consumed as complete inventories.
+            logger.error("Subscriptions request failed: %s", exc)
+            return []
         if response.status_code == 200:
             subscriptions.extend(response.json().get("data", []))
             # Paginate if necessary
@@ -100,22 +105,130 @@ def get_subscription_by_id(
         Optional[Dict[Any, Any]]: The subscription represented as a dictionary in a format following JSON:API spec, or None if not found.
     """
     headers = get_auth_headers(ctx)
-    response = requests.get(
-        f"{SUBSCRIPTIONS_API_BASE_URL}/sub/{subscription_id}",
-        headers=headers,
-        timeout=get_api_timeout(),
-    )
-    if response.status_code == 200:
-        subscription = response.json().get("data", None)
-        if subscription:
-            logger.debug(f"Retrieved subscription {subscription_id}")
-            return subscription
-        else:
-            logger.warning(f"Subscription {subscription_id} not found in response")
-            return None
-    else:
+    try:
+        response = requests.get(
+            f"{SUBSCRIPTIONS_API_BASE_URL}/sub/{subscription_id}",
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Subscription %s request failed: %s", subscription_id, exc)
+        return None
+    if response.status_code != 200:
         logger.error(f"Failed to retrieve subscription {subscription_id}: {response.status_code} - {response.text}")
         return None
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.warning("Subscription %s returned non-JSON body", subscription_id)
+        return None
+    subscription = payload.get("data") if isinstance(payload, dict) else None
+    if subscription:
+        logger.debug(f"Retrieved subscription {subscription_id}")
+        return subscription
+    logger.warning(f"Subscription {subscription_id} not found in response")
+    return None
+
+
+def create_subscription(
+    attributes: Dict[str, Any],
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Create a subscription.
+
+    Args:
+        attributes (Dict[str, Any]): JSON:API attributes payload for the subscription.
+
+    Returns:
+        Optional[Dict[Any, Any]]: Created subscription data when successful, otherwise None.
+    """
+    headers = get_auth_headers(ctx)
+    payload = {"data": {"type": "Subscription", "attributes": attributes}}
+    try:
+        response = requests.post(
+            f"{SUBSCRIPTIONS_API_BASE_URL}/sub",
+            headers=headers,
+            json=payload,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Create subscription request failed: %s", exc)
+        return None
+    if response.status_code not in (200, 201):
+        logger.error("Failed to create subscription: %s - %s", response.status_code, response.text)
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        logger.warning("Create subscription returned non-JSON body")
+        return None
+    return body.get("data") if isinstance(body, dict) else None
+
+
+def update_subscription(
+    subscription_id: str,
+    attributes: Dict[str, Any],
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Update an existing subscription.
+
+    Args:
+        subscription_id (str): Subscription ID to update.
+        attributes (Dict[str, Any]): JSON:API attributes patch payload.
+
+    Returns:
+        Optional[Dict[Any, Any]]: Updated subscription data when successful, otherwise None.
+    """
+    headers = get_auth_headers(ctx)
+    payload = {
+        "data": {
+            "type": "Subscription",
+            "id": subscription_id,
+            "attributes": attributes,
+        }
+    }
+    try:
+        response = requests.patch(
+            f"{SUBSCRIPTIONS_API_BASE_URL}/sub/{subscription_id}",
+            headers=headers,
+            json=payload,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Update subscription %s request failed: %s", subscription_id, exc)
+        return None
+    if response.status_code not in (200, 202):
+        logger.error(
+            "Failed to update subscription %s: %s - %s",
+            subscription_id,
+            response.status_code,
+            response.text,
+        )
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        logger.warning("Update subscription %s returned non-JSON body", subscription_id)
+        return None
+    return body.get("data") if isinstance(body, dict) else None
+
+
+def cancel_subscription(
+    subscription_id: str,
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Cancel a subscription by setting its status to cancelled.
+
+    Args:
+        subscription_id (str): Subscription ID to cancel.
+
+    Returns:
+        Optional[Dict[Any, Any]]: Updated subscription data when successful, otherwise None.
+    """
+    return update_subscription(subscription_id, {"status": "cancelled"}, ctx=ctx)
 
 
 def get_storage_subscriptions(
@@ -129,44 +242,119 @@ def get_storage_subscriptions(
         List[Dict[Any, Any]]: A list of storage subscriptions, each represented as a dictionary in a format following JSON:API spec.
     """
     headers = get_auth_headers(ctx)
-    params = {}
+    # Step 1: fetch active storages. Failure here returns empty;
+    # nothing downstream to attempt.
+    try:
+        storages_response = requests.get(
+            f"{SUBSCRIPTIONS_API_BASE_URL}/storages?status=active",
+            headers=headers,
+            params={},
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.error("Storages request failed: %s", exc)
+        return []
+    if storages_response.status_code != 200:
+        logger.error(
+            "Failed to retrieve storages: %s - %s",
+            storages_response.status_code,
+            storages_response.text,
+        )
+        return []
+    try:
+        sub_response = storages_response.json()
+    except ValueError:
+        logger.warning("Storages response was not JSON")
+        return []
+    if not isinstance(sub_response, dict):
+        logger.warning("Storages response was not an object")
+        return []
+    raw_storages = sub_response.get("data")
+    if not isinstance(raw_storages, list):
+        logger.warning("Storages response missing 'data' list; returning empty")
+        return []
+
     storages = []
-    sub_response = requests.get(
-        f"{SUBSCRIPTIONS_API_BASE_URL}/storages?status=active",
-        headers=headers,
-        params=params,
-        timeout=get_api_timeout(),
-    ).json()
-    for sub in sub_response['data']:
-        for included in sub_response['included']:
-            if str(included['id']) == str(sub['attributes']['storage_group_id']):
-                key_name = included['attributes']['key_name']
-                name = included['attributes']['name']
+    included = sub_response.get("included", [])
+    if not isinstance(included, list):
+        included = []
+    for sub in raw_storages:
+        if not isinstance(sub, dict):
+            continue
+        attributes = sub.get("attributes") or {}
+        if not isinstance(attributes, dict):
+            continue
+        storage_group_id = attributes.get("storage_group_id")
+        if storage_group_id is None:
+            continue
+        name = "Unknown"
+        key_name = "unknown"
+        for inc in included:
+            if not isinstance(inc, dict):
+                continue
+            if str(inc.get("id")) == str(storage_group_id):
+                inc_attrs = inc.get("attributes") or {}
+                if isinstance(inc_attrs, dict):
+                    key_name = inc_attrs.get("key_name", key_name)
+                    name = inc_attrs.get("name", name)
                 break
-        storages.append({"storage_id": sub['attributes']['storage_group_id'], "subscription_id": sub['id'], "name": name, "key_name": key_name})
-    
-    # Get SPM for each storage
+        storages.append({
+            "storage_id": storage_group_id,
+            "subscription_id": sub.get("id"),
+            "name": name,
+            "key_name": key_name,
+        })
+
+    # Step 2: best-effort SPM per storage. Each failure logged, storage
+    # still included with storage_type=unknown and no SPM keys.
     result = []
     for storage in storages:
         url = f'{SUBSCRIPTIONS_API_BASE_URL}/spm?subscription={storage["subscription_id"]}'
-        spm_resp = requests.get(url, headers=headers, timeout=get_api_timeout())
-        spm_resp.raise_for_status()
-        spm_data = spm_resp.json().get('data', [])
-        storage_spm = {
-            x['attributes']['data_key']: x['attributes']['data_value']
-            for x in spm_data
-            if x.get('attributes', {}).get('data_key') in SPM_REQUIRED_PARAMS
-        }
-        # Safely get storage type from first SPM entry if available
-        storage_type = 'unknown'
-        if spm_data:
-            product_name = (
-                spm_data[0]
-                .get('attributes', {})
-                .get('product', {})
-                .get('name')
+        try:
+            spm_resp = requests.get(url, headers=headers, timeout=get_api_timeout())
+        except requests.RequestException as exc:
+            logger.warning(
+                "SPM request failed for subscription %s: %s",
+                storage["subscription_id"],
+                exc,
             )
-            if product_name:
-                storage_type = STORAGE_TYPE_MAPPING.get(product_name, 'unknown')
+            result.append({"storage_type": "unknown", **storage})
+            continue
+        if spm_resp.status_code != 200:
+            logger.warning(
+                "SPM call for subscription %s failed: %s",
+                storage["subscription_id"],
+                spm_resp.status_code,
+            )
+            result.append({"storage_type": "unknown", **storage})
+            continue
+        try:
+            spm_body = spm_resp.json()
+        except ValueError:
+            logger.warning(
+                "SPM response for subscription %s was not JSON",
+                storage["subscription_id"],
+            )
+            result.append({"storage_type": "unknown", **storage})
+            continue
+        spm_data = spm_body.get("data", []) if isinstance(spm_body, dict) else []
+        if not isinstance(spm_data, list):
+            spm_data = []
+        storage_spm = {
+            x["attributes"]["data_key"]: x["attributes"]["data_value"]
+            for x in spm_data
+            if isinstance(x, dict)
+            and isinstance(x.get("attributes"), dict)
+            and x["attributes"].get("data_key") in SPM_REQUIRED_PARAMS
+        }
+        storage_type = "unknown"
+        if spm_data and isinstance(spm_data[0], dict):
+            first_attrs = spm_data[0].get("attributes") or {}
+            if isinstance(first_attrs, dict):
+                product = first_attrs.get("product") or {}
+                if isinstance(product, dict):
+                    product_name = product.get("name")
+                    if product_name:
+                        storage_type = STORAGE_TYPE_MAPPING.get(product_name, "unknown")
         result.append({"storage_type": storage_type, **storage, **storage_spm})
     return result

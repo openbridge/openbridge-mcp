@@ -1,0 +1,29 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "mcp_input_validation — Pydantic validator rejects required-field absence before any upstream call",
+    "trigger": "Tool call with missing required `marketplaceIds` field",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/error_envelope.py",
+    "source_branch": "_format_exception_to_envelope → PydanticValidationError"
+  },
+  "envelope": {
+    "error_kind": "mcp_input_validation",
+    "tool": "ordersv2_getOrders",
+    "summary": "Tool input validation failed.",
+    "details": [
+      {
+        "path": "marketplaceIds",
+        "issue": "Field required",
+        "received_type": "NoneType"
+      }
+    ],
+    "hints": [
+      "Check required fields and input types in the tool schema.",
+      "Avoid passing JSON arrays/objects as quoted strings when native JSON is expected."
+    ],
+    "examples": [],
+    "error_code": "INPUT_VALIDATION_FAILED",
+    "retryable": false,
+    "_envelope_version": 1
+  }
+}

@@ -15,8 +15,56 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from src.auth.authentication import OpenbridgeAuthMiddleware, JWT_PUBLIC_ATTR
+from mcp import McpError
+
+from src.auth.authentication import (
+    AUTH_ERROR_CODE,
+    AuthConfig,
+    OpenbridgeAuthMiddleware,
+    JWT_PUBLIC_ATTR,
+    create_auth_middleware,
+    create_openbridge_config,
+)
 from src.auth.simple import OpenbridgeAuth, is_refresh_token
+
+
+# ---------------------------------------------------------------------------
+# AuthConfig and create_openbridge_config
+# ---------------------------------------------------------------------------
+
+
+class TestAuthConfig:
+    """Tests for AuthConfig and create_openbridge_config."""
+
+    def test_default_config_enabled(self, monkeypatch):
+        """Without AUTH_ENABLED env var, auth is enabled by default."""
+        monkeypatch.delenv("AUTH_ENABLED", raising=False)
+        config = create_openbridge_config()
+        assert config.enabled is True
+        assert config.refresh_token_enabled is True
+        assert config.jwt_validation_enabled is True
+        assert config.jwt_verify_signature is True
+
+    def test_auth_disabled_by_env_var(self, monkeypatch):
+        """AUTH_ENABLED=false disables authentication."""
+        monkeypatch.setenv("AUTH_ENABLED", "false")
+        config = create_openbridge_config()
+        assert config.enabled is False
+        assert config.refresh_token_enabled is False
+        assert config.jwt_validation_enabled is False
+        assert config.jwt_verify_signature is True  # Always verify when enabled
+
+    def test_auth_disabled_case_insensitive(self, monkeypatch):
+        """AUTH_ENABLED=False (mixed case) also disables."""
+        monkeypatch.setenv("AUTH_ENABLED", "False")
+        config = create_openbridge_config()
+        assert config.enabled is False
+
+    def test_middleware_empty_when_disabled(self):
+        """create_auth_middleware returns empty list when config.enabled=False."""
+        config = AuthConfig(enabled=False)
+        middleware = create_auth_middleware(config)
+        assert middleware == []
 
 
 # ---------------------------------------------------------------------------
@@ -37,6 +85,20 @@ class DummyFastMCPContext:
         self._state = {}
 
     def set_state(self, key, value):
+        self._state[key] = value
+        setattr(self, key, value)
+
+    def get_state(self, key):
+        return self._state.get(key)
+
+
+class DummyAsyncFastMCPContext:
+    """Mock FastMCP context with async set_state for testing."""
+
+    def __init__(self):
+        self._state = {}
+
+    async def set_state(self, key, value):
         self._state[key] = value
         setattr(self, key, value)
 
@@ -350,36 +412,34 @@ def test_openbridge_auth_get_jwt_fails_without_token(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Client exchange failure → falls back to server token
+# Client exchange failure → surface as McpError, do NOT silently fall back
 # ---------------------------------------------------------------------------
+#
+# REGRESSION guard: before this fix, a failed client refresh-token
+# exchange was silently swallowed by a broad try/except and execution
+# continued with either the server token or no auth. That caused tool
+# calls to quietly return empty/other-account data instead of signalling
+# that the caller's credential was rejected.
 
 @pytest.mark.asyncio
-async def test_middleware_falls_back_when_client_exchange_fails(monkeypatch):
-    """If the client refresh-token exchange fails, fall back to server token."""
+async def test_middleware_raises_mcp_error_when_client_exchange_fails(monkeypatch):
+    """A failed client refresh-token exchange must surface as an McpError
+    (JSON-RPC auth failure) — never silently fall back to the server token.
+    """
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "server:token")
     monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
 
-    call_count = {"n": 0}
+    def failing_post(url, json, headers, timeout):
+        # Every exchange attempt fails. The server-token fallback must
+        # NOT be reached — if it is, this will still fail but at least the
+        # assertion below will be informative.
+        raise ConnectionError("Auth API unreachable")
 
-    def selective_post(url, json, headers, timeout):
-        call_count["n"] += 1
-        refresh = json["data"]["attributes"]["refresh_token"]
-        if refresh == "bad_client:token":
-            # Simulate API failure for client token
-            raise ConnectionError("Auth API unreachable")
-        return SimpleNamespace(
-            raise_for_status=lambda: None,
-            json=lambda: {"data": {"attributes": {"token": "server-fallback-jwt"}}},
-        )
-
-    monkeypatch.setattr("src.auth.simple.requests.post", selective_post)
-    monkeypatch.setattr("src.auth.simple.time.time", lambda: 1000)
-    monkeypatch.setattr("src.auth.simple.jwt.decode", lambda token, options: {"expires_at": 9999999999})
+    monkeypatch.setattr("src.auth.simple.requests.post", failing_post)
 
     auth = OpenbridgeAuth()
     middleware = OpenbridgeAuthMiddleware(auth)
 
-    # Client sends a bad refresh token
     mock_request = SimpleNamespace(headers={"authorization": "Bearer bad_client:token"})
     monkeypatch.setattr("src.auth.authentication.get_http_request", lambda: mock_request)
 
@@ -387,8 +447,383 @@ async def test_middleware_falls_back_when_client_exchange_fails(monkeypatch):
     context = DummyMiddlewareContext(fastmcp_context=fastmcp_ctx)
     call_next = AsyncMock(return_value="response")
 
+    with pytest.raises(McpError) as exc_info:
+        await middleware.on_request(context, call_next)
+
+    # The error must carry our auth-failure code and a message that points
+    # the operator at the Authorization header, not a generic "internal error".
+    assert exc_info.value.error.code == AUTH_ERROR_CODE
+    assert "Authorization" in exc_info.value.error.message
+    # Downstream handler must not have run — auth failure is terminal.
+    call_next.assert_not_called()
+    # Context must not have been polluted with a stale fallback JWT.
+    assert JWT_PUBLIC_ATTR not in fastmcp_ctx._state
+
+
+@pytest.mark.asyncio
+async def test_middleware_does_not_fall_back_to_server_on_client_exchange_failure(
+    monkeypatch,
+):
+    """The specific bug: OPENBRIDGE_REFRESH_TOKEN must NOT be used when the
+    client supplied a (failing) credential. Using the server token in that
+    case would return data for the wrong account.
+    """
+    monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "server:token")
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    seen = []
+
+    def tracking_post(url, json, headers, timeout):
+        seen.append(json["data"]["attributes"]["refresh_token"])
+        raise ConnectionError("Auth API unreachable")
+
+    monkeypatch.setattr("src.auth.simple.requests.post", tracking_post)
+
+    auth = OpenbridgeAuth()
+    middleware = OpenbridgeAuthMiddleware(auth)
+
+    mock_request = SimpleNamespace(headers={"authorization": "Bearer bad_client:token"})
+    monkeypatch.setattr("src.auth.authentication.get_http_request", lambda: mock_request)
+
+    fastmcp_ctx = DummyFastMCPContext()
+    context = DummyMiddlewareContext(fastmcp_context=fastmcp_ctx)
+    call_next = AsyncMock()
+
+    with pytest.raises(McpError):
+        await middleware.on_request(context, call_next)
+
+    # Only the client token was attempted. server:token must NOT have
+    # been silently substituted.
+    assert seen == ["bad_client:token"]
+
+
+@pytest.mark.asyncio
+async def test_middleware_supports_async_context_set_state(monkeypatch):
+    """Middleware should await async FastMCP context set_state."""
+    monkeypatch.delenv("OPENBRIDGE_REFRESH_TOKEN", raising=False)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    client_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiam9obiJ9.signature"
+    mock_request = SimpleNamespace(headers={"authorization": f"Bearer {client_jwt}"})
+    monkeypatch.setattr("src.auth.authentication.get_http_request", lambda: mock_request)
+
+    auth = OpenbridgeAuth()
+    middleware = OpenbridgeAuthMiddleware(auth)
+
+    fastmcp_ctx = DummyAsyncFastMCPContext()
+    context = DummyMiddlewareContext(fastmcp_context=fastmcp_ctx)
+    call_next = AsyncMock(return_value="response")
+
     result = await middleware.on_request(context, call_next)
 
     assert result == "response"
-    # Should have fallen back to server token
-    assert fastmcp_ctx._state[JWT_PUBLIC_ATTR] == "server-fallback-jwt"
+    assert fastmcp_ctx._state[JWT_PUBLIC_ATTR] == client_jwt
+
+
+# ---------------------------------------------------------------------------
+# Phase 1b — middleware branch coverage fill-ins
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_middleware_noop_when_no_fastmcp_context(monkeypatch):
+    """When the outer request has no fastmcp_context, the middleware
+    must still invoke call_next (MCP health/list-tools paths, etc.)
+    without attempting any auth resolution."""
+    monkeypatch.delenv("OPENBRIDGE_REFRESH_TOKEN", raising=False)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("Auth API must not be called when fastmcp_context is None")
+
+    monkeypatch.setattr("src.auth.simple.requests.post", explode)
+
+    auth = OpenbridgeAuth()
+    middleware = OpenbridgeAuthMiddleware(auth)
+
+    context = DummyMiddlewareContext(fastmcp_context=None)
+    call_next = AsyncMock(return_value="response")
+
+    result = await middleware.on_request(context, call_next)
+
+    assert result == "response"
+    call_next.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_middleware_handles_empty_bearer(monkeypatch):
+    """'Authorization: Bearer ' (with empty or whitespace-only token)
+    must fall through to the server-token path, not attempt to exchange
+    an empty string."""
+    monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "server:token")
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    seen_refresh_tokens = []
+
+    def tracking_post(url, json, headers, timeout):
+        seen_refresh_tokens.append(json["data"]["attributes"]["refresh_token"])
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"attributes": {"token": "server-jwt"}}},
+        )
+
+    monkeypatch.setattr("src.auth.simple.requests.post", tracking_post)
+    monkeypatch.setattr("src.auth.simple.jwt.decode", lambda token, options: {"expires_at": 9999999999})
+
+    mock_request = SimpleNamespace(headers={"authorization": "Bearer   "})
+    monkeypatch.setattr("src.auth.authentication.get_http_request", lambda: mock_request)
+
+    auth = OpenbridgeAuth()
+    middleware = OpenbridgeAuthMiddleware(auth)
+
+    fastmcp_ctx = DummyFastMCPContext()
+    context = DummyMiddlewareContext(fastmcp_context=fastmcp_ctx)
+    call_next = AsyncMock(return_value="response")
+
+    await middleware.on_request(context, call_next)
+
+    # Exchange must have used the SERVER token, not the empty client token.
+    assert seen_refresh_tokens == ["server:token"]
+    assert fastmcp_ctx._state[JWT_PUBLIC_ATTR] == "server-jwt"
+
+
+def test_client_cache_evicts_when_capped(monkeypatch):
+    """exchange_token cache is bounded — after writing past the configured
+    cap, the LRU entry must be evicted. Pin the cap to 8 via env so this
+    test stays fast and doesn't depend on the production default.
+    """
+    monkeypatch.setenv("OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES", "8")
+    monkeypatch.delenv("OPENBRIDGE_REFRESH_TOKEN", raising=False)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    def fake_post(url, json, headers, timeout):
+        token = json["data"]["attributes"]["refresh_token"]
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"attributes": {"token": f"jwt-for-{token}"}}},
+        )
+
+    monkeypatch.setattr("src.auth.simple.requests.post", fake_post)
+    monkeypatch.setattr("src.auth.simple.jwt.decode", lambda token, options: {"expires_at": 9999999999})
+
+    auth = OpenbridgeAuth()
+    assert auth._client_cache.max_entries == 8
+
+    for i in range(20):
+        auth.exchange_token(f"client{i:04d}:secret{i:04d}")
+
+    assert len(auth._client_cache) == 8, (
+        f"exchange_token cache grew unbounded: {len(auth._client_cache)} entries"
+    )
+    # The oldest never-touched entry (client0000) must have been evicted.
+    assert "client0000:secret0000" not in auth._client_cache
+    # The most recent inserts must still be present.
+    assert "client0019:secret0019" in auth._client_cache
+
+
+def test_client_cache_lru_keeps_active_entries(monkeypatch):
+    """LRU regression: an entry that gets re-read must NOT be evicted in
+    favor of less-active entries. This is the specific behavior change
+    from the old FIFO eviction (which would have evicted the original
+    insert regardless of access patterns).
+    """
+    monkeypatch.setenv("OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES", "3")
+    monkeypatch.delenv("OPENBRIDGE_REFRESH_TOKEN", raising=False)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    def fake_post(url, json, headers, timeout):
+        token = json["data"]["attributes"]["refresh_token"]
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"attributes": {"token": f"jwt-for-{token}"}}},
+        )
+
+    monkeypatch.setattr("src.auth.simple.requests.post", fake_post)
+    monkeypatch.setattr("src.auth.simple.jwt.decode", lambda token, options: {"expires_at": 9999999999})
+
+    auth = OpenbridgeAuth()
+
+    # Fill the cache with three entries.
+    auth.exchange_token("active-tenant:aaa")
+    auth.exchange_token("middle-tenant:bbb")
+    auth.exchange_token("oldest-tenant:ccc")
+
+    # Re-read the *oldest* insert — under LRU this promotes it to MRU.
+    auth.exchange_token("active-tenant:aaa")
+
+    # Insert a fourth tenant. The LRU at this point is "middle-tenant",
+    # NOT "active-tenant" (which was just touched).
+    auth.exchange_token("new-tenant:ddd")
+
+    assert "active-tenant:aaa" in auth._client_cache, (
+        "FIFO regression: the most-recently-touched entry was evicted "
+        "instead of the actual LRU entry"
+    )
+    assert "middle-tenant:bbb" not in auth._client_cache
+    assert "oldest-tenant:ccc" in auth._client_cache
+    assert "new-tenant:ddd" in auth._client_cache
+
+
+def test_client_cache_cap_falls_back_on_bad_env(monkeypatch):
+    """A non-integer ``OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES`` must not crash
+    boot — it falls back to the default cap with a warning."""
+    from src.auth.simple import (
+        DEFAULT_CLIENT_CACHE_MAX_ENTRIES,
+        _parse_cache_cap,
+    )
+
+    monkeypatch.setenv("OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES", "not-a-number")
+    assert _parse_cache_cap() == DEFAULT_CLIENT_CACHE_MAX_ENTRIES
+
+
+def test_client_cache_cap_clamps_below_one(monkeypatch):
+    """Sub-1 cap is clamped to 1 (a zero-entry cache would defeat the
+    purpose entirely)."""
+    from src.auth.simple import _parse_cache_cap
+
+    monkeypatch.setenv("OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES", "0")
+    assert _parse_cache_cap() == 1
+
+
+def test_client_cache_cap_default_when_unset(monkeypatch):
+    """Unset env var resolves to the production default."""
+    from src.auth.simple import (
+        DEFAULT_CLIENT_CACHE_MAX_ENTRIES,
+        _parse_cache_cap,
+    )
+
+    monkeypatch.delenv("OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES", raising=False)
+    assert _parse_cache_cap() == DEFAULT_CLIENT_CACHE_MAX_ENTRIES
+
+
+def test_in_memory_cache_satisfies_token_cache_protocol():
+    """REGRESSION guard: the in-memory implementation must satisfy the
+    public ``TokenCache`` Protocol so a Redis-backed adapter (or any
+    other future swap) can drop in without breaking callers. If someone
+    removes ``get``/``set``/``__contains__``/``__len__``/``__iter__``,
+    this isinstance check fails."""
+    from src.auth.simple import TokenCache, _InMemoryLRUTokenCache
+
+    cache = _InMemoryLRUTokenCache(max_entries=4)
+    assert isinstance(cache, TokenCache)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1c — OpenbridgeAuth error branches
+# ---------------------------------------------------------------------------
+
+
+def test_get_api_timeout_returns_default_on_non_numeric_env(monkeypatch):
+    """Per contract: non-numeric OPENBRIDGE_API_TIMEOUT must not raise on
+    every call. Parsing happens once at import; malformed values fall
+    back to the default (10, 30) with a warn-log."""
+    # Re-import-style evaluation: call the parser directly to simulate
+    # startup-time re-parse under a malformed env var.
+    from src.auth import simple
+
+    monkeypatch.setenv("OPENBRIDGE_API_TIMEOUT", "not-a-number")
+    parsed = simple._parse_read_timeout()
+    assert parsed == simple.DEFAULT_READ_TIMEOUT
+
+
+def test_get_api_timeout_parses_valid_env(monkeypatch):
+    from src.auth import simple
+
+    monkeypatch.setenv("OPENBRIDGE_API_TIMEOUT", "45")
+    assert simple._parse_read_timeout() == 45
+
+
+def test_do_exchange_raises_on_network_error(monkeypatch):
+    """When requests.post raises, _do_exchange wraps it in AuthenticationError."""
+    from src.auth.simple import AuthenticationError
+
+    def raising_post(*args, **kwargs):
+        raise ConnectionError("DNS failure")
+
+    monkeypatch.setattr("src.auth.simple.requests.post", raising_post)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    auth = OpenbridgeAuth()
+    with pytest.raises(AuthenticationError) as exc_info:
+        auth._do_exchange("client:token")
+
+    assert "Openbridge auth request failed" in str(exc_info.value)
+
+
+def test_do_exchange_raises_on_non_200(monkeypatch):
+    """Non-200 response from the auth API must surface as AuthenticationError."""
+    from src.auth.simple import AuthenticationError
+
+    class FakeResponse:
+        def raise_for_status(self):
+            raise RuntimeError("401 Unauthorized")
+
+        def json(self):  # pragma: no cover - not reached after raise_for_status
+            return {}
+
+    def fake_post(*args, **kwargs):
+        return FakeResponse()
+
+    monkeypatch.setattr("src.auth.simple.requests.post", fake_post)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    auth = OpenbridgeAuth()
+    with pytest.raises(AuthenticationError) as exc_info:
+        auth._do_exchange("client:token")
+
+    assert "Failed to convert refresh token to JWT" in str(exc_info.value)
+
+
+def test_do_exchange_raises_when_token_missing_from_payload(monkeypatch):
+    """200 response that omits data.attributes.token must be an auth error,
+    not a KeyError or a silent None."""
+    from src.auth.simple import AuthenticationError
+
+    def fake_post(*args, **kwargs):
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"attributes": {}}},  # token key missing
+        )
+
+    monkeypatch.setattr("src.auth.simple.requests.post", fake_post)
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    auth = OpenbridgeAuth()
+    with pytest.raises(AuthenticationError) as exc_info:
+        auth._do_exchange("client:token")
+
+    assert "did not include a token" in str(exc_info.value)
+
+
+def test_get_jwt_refreshes_when_cache_expired(monkeypatch):
+    """When the cached server-token JWT has expired (accounting for the
+    5-minute buffer), the next get_jwt call must re-exchange."""
+    monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "server:token")
+    monkeypatch.setattr("src.auth.simple._AUTH_INSTANCE", None)
+
+    call_count = {"n": 0}
+
+    def counting_post(url, json, headers, timeout):
+        call_count["n"] += 1
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"data": {"attributes": {"token": f"jwt-v{call_count['n']}"}}},
+        )
+
+    monkeypatch.setattr("src.auth.simple.requests.post", counting_post)
+    # Each refresh sets expires_at=2000. Time starts at 1000 (cache valid),
+    # then jumps past the 5-min buffer so the cache is stale.
+    clock = {"t": 1000.0}
+    monkeypatch.setattr("src.auth.simple.time.time", lambda: clock["t"])
+    monkeypatch.setattr("src.auth.simple.jwt.decode", lambda token, options: {"expires_at": 2000})
+
+    auth = OpenbridgeAuth()
+    first = auth.get_jwt()
+    assert first == "jwt-v1"
+    assert call_count["n"] == 1
+
+    # Advance clock past the buffered expiry (2000 - 300 = 1700).
+    clock["t"] = 1800.0
+    second = auth.get_jwt()
+    assert second == "jwt-v2"
+    assert call_count["n"] == 2

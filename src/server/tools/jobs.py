@@ -1,5 +1,5 @@
 import os
-from datetime import datetime as dt, timedelta as td
+from datetime import UTC, datetime as dt, timedelta as td
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -10,7 +10,8 @@ from .base import get_api_timeout, get_auth_headers
 
 logger = get_logger("jobs")
 
-JOBS_API_BASE_URL = os.getenv('JOBS_API_BASE_URL', 'https://service.api.openbridge.io/service/jobs/production/jobs')
+JOBS_API_BASE_URL = os.getenv('JOBS_API_BASE_URL', 'https://service.api.openbridge.io/service/jobs/production')
+HISTORY_API_BASE_URL = os.getenv("HISTORY_API_BASE_URL", "https://history.api.openbridge.io")
 
 
 def get_jobs(
@@ -53,8 +54,100 @@ def get_jobs(
         response.raise_for_status()
         return response.json().get('data', [])
     except requests.RequestException as e:
-        logger.error(f"Error fetching jobs: {e}")
+        logger.error("Error fetching jobs: %s", e)
         return []
+
+
+def get_job_by_id(
+    job_id: int,
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Fetch a single job by job ID.
+
+    Args:
+        job_id (int): The job ID to fetch.
+
+    Returns:
+        Optional[Dict[Any, Any]]: Job data when found, otherwise None.
+    """
+    headers = get_auth_headers(ctx)
+    try:
+        response = requests.get(
+            f"{JOBS_API_BASE_URL}/jobs/{job_id}",
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Error fetching job %s: %s", job_id, e)
+        return None
+
+    return response.json().get("data")
+
+
+def get_history_by_id(
+    history_id: int,
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Fetch a history transaction by ID.
+
+    Args:
+        history_id (int): History transaction ID.
+
+    Returns:
+        Optional[Dict[Any, Any]]: History transaction data when found, otherwise None.
+    """
+    headers = get_auth_headers(ctx)
+    try:
+        response = requests.get(
+            f"{HISTORY_API_BASE_URL}/history/{history_id}",
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Error fetching history %s: %s", history_id, e)
+        return None
+    return response.json().get("data")
+
+
+def update_history_status(
+    history_id: int,
+    status: str,
+    ctx: Optional[Context] = None,
+) -> Optional[Dict[Any, Any]]:
+    """
+    Update a history transaction status.
+
+    Args:
+        history_id (int): History transaction ID.
+        status (str): New status value.
+
+    Returns:
+        Optional[Dict[Any, Any]]: Updated history transaction data when successful, otherwise None.
+    """
+    headers = get_auth_headers(ctx)
+    payload = {
+        "data": {
+            "type": "HistoryTransaction",
+            "id": str(history_id),
+            "attributes": {"status": status},
+        }
+    }
+    try:
+        response = requests.patch(
+            f"{HISTORY_API_BASE_URL}/history/{history_id}",
+            headers=headers,
+            json=payload,
+            timeout=get_api_timeout(),
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Error updating history %s: %s", history_id, e)
+        return None
+    return response.json().get("data")
 
 
 def create_job(
@@ -69,8 +162,8 @@ def create_job(
 
     Args:
         subscription_id (int): The subscription ID to create jobs for.
-        start_date (str): The start date for the job in ISO format. This should be the MOST recent date for the job.
-        end_date (str): The end date for the job in ISO format. This should be the LEAST recent date for the job.
+        date_start (str): The earliest date for the job in ISO format (YYYY-MM-DD).
+        date_end (str): The latest date for the job in ISO format (YYYY-MM-DD).
         stage_ids (List[int]): The stage IDs for the jobs. These IDs can be found by calling the `get_product_stage_ids` tool if needed.
 
     Returns:
@@ -84,10 +177,10 @@ def create_job(
                 "type": "HistoryTransaction",
                 "attributes": {
                     "subscription_id": subscription_id,
-                    "start_date": date_end,  # TODO: The LLM refuses to set the start date as the most recent date, so swap them.
-                    "end_date": date_start,
+                    "start_date": date_start,
+                    "end_date": date_end,
                     "stage_id": stage_id,
-                    "start_time": dt.strftime(dt.utcnow() + td(minutes=5), "%Y-%m-%d %H:%M:%S")
+                    "start_time": (dt.now(UTC) + td(minutes=5)).isoformat()
                 }
             }
         }
@@ -95,7 +188,7 @@ def create_job(
         response = None
         try:
             response = requests.post(
-                f"{os.getenv('HISTORY_API_BASE_URL')}/history/{subscription_id}",
+                f"{HISTORY_API_BASE_URL}/history/{subscription_id}",
                 headers=headers,
                 json=payload,
                 timeout=get_api_timeout(),

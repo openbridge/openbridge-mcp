@@ -1,0 +1,36 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "sp_api_http — Upstream SP-API returns HTTP 429 with rate-limit headers and Retry-After (currently classified as sp_api_http; v1.1 promotes to rate_limited)",
+    "trigger": "Burst of requests exceeding SP-API rate limit",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/error_envelope.py",
+    "source_branch": "_format_exception_to_envelope → httpx.HTTPStatusError + extract_response_meta"
+  },
+  "envelope": {
+    "error_kind": "sp_api_http",
+    "tool": "ordersv2_getOrders",
+    "summary": "SP-API request failed with HTTP 429.",
+    "details": [
+      {
+        "path": "",
+        "issue": "Quota exceeded",
+        "received_type": "str"
+      }
+    ],
+    "hints": [
+      "Rate limited by SP-API; retry with backoff."
+    ],
+    "examples": [],
+    "error_code": "SP_API_HTTP_429",
+    "retryable": true,
+    "_envelope_version": 1,
+    "_meta": {
+      "rate_limit": {
+        "limit_per_second": 0.0167,
+        "remaining": 0,
+        "reset_at": "2026-04-25T17:42:34Z"
+      },
+      "retry_after_seconds": 1.2
+    }
+  }
+}

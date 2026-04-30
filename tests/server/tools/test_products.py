@@ -265,7 +265,7 @@ def test_list_product_tables_subscription_fallback(monkeypatch):
         elif "payloads" in url:
             call_count["payloads"] += 1
             assert url == "https://product.test/2/payloads"
-            assert params == {"stage_id__gte": 1000}
+            assert "stage_id__gte" not in (params or {})
             return SimpleNamespace(
                 status_code=200,
                 raise_for_status=lambda: None,
@@ -361,3 +361,29 @@ def test_search_products_pagination(monkeypatch):
 
     assert call_count["page"] == 2
     assert len(results) == 2
+
+
+def test_fetch_product_payloads_legacy_no_filter(monkeypatch):
+    """Legacy subscriptions (stage_ids=[0]) should not filter by stage_id__gte."""
+    monkeypatch.setattr(products, "PRODUCT_API_BASE_URL", "https://product.test")
+
+    captured_params = {}
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured_params.update(params or {})
+        return SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "data": [
+                    {"id": "1", "attributes": {"name": "table_a", "stage_id": 0}},
+                    {"id": "2", "attributes": {"name": "table_b", "stage_id": 0}},
+                ]
+            },
+        )
+    monkeypatch.setattr(products.requests, "get", fake_get)
+
+    results = products._fetch_product_payloads(2, [0], {"Authorization": "token"})
+
+    assert "stage_id__gte" not in captured_params
+    assert len(results) == 2
+    assert results[0]["name"] == "table_a"

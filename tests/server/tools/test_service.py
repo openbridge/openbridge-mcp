@@ -120,8 +120,10 @@ def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
 
     def fake_get(url, params=None, headers=None, timeout=None):
         assert url == "https://service.test/service/rules/prod/v1/rules/search"
-        assert params == {"path": "path-query", "latest": "true"}
+        assert params == {"path__icontains": "path-query", "latest": "true"}
         return SimpleNamespace(
+            status_code=200,
+            text="{}",
             json=lambda: {
                 "data": [
                     {"attributes": {"path": "rules/catalog/product"}},
@@ -137,14 +139,33 @@ def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
     assert names == ["product_master", "order_master"]
 
 
+def test_get_suggested_table_names_returns_empty_on_non_json(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="<html>bad</html>",
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    names = service.get_suggested_table_names("path-query")
+
+    assert names == []
+
+
 def test_get_table_schema_strips_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None, timeout=None):
-        assert url == "https://service.test/service/rules/prod/v1/rules/search?path=orders&latest=true"
+        assert url == "https://service.test/service/rules/prod/v1/rules/search?path__icontains=orders&latest=true"
         return SimpleNamespace(
             status_code=200,
+            text="{}",
             json=lambda: {
                 "data": [
                     {"attributes": {"path": "catalog/orders"}},
@@ -157,6 +178,189 @@ def test_get_table_schema_strips_master_suffix(monkeypatch):
     rules = service.get_table_schema("orders_master")
 
     assert rules == {"attributes": {"path": "catalog/orders"}}
+
+
+def test_get_suggested_table_names_extracts_leaf_from_hierarchical_path(monkeypatch):
+    """Real Rules API returns paths like 'amazon-ads/amzn_ads_sp_campaigns'.
+    We want just the leaf name with '_master' appended."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_advertised_products"}},
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sb_campaigns"}},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    names = service.get_suggested_table_names("amzn_ads")
+
+    assert names == [
+        "amzn_ads_sp_advertised_products_master",
+        "amzn_ads_sb_campaigns_master",
+    ]
+
+
+def test_get_suggested_table_names_returns_empty_on_non_200(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return SimpleNamespace(status_code=500, text="server error")
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_suggested_table_names("anything") == []
+
+
+def test_get_suggested_table_names_returns_empty_on_request_exception(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    import requests as _requests
+
+    def fake_get(*args, **kwargs):
+        raise _requests.RequestException("network down")
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_suggested_table_names("anything") == []
+
+
+def test_get_table_schema_uses_icontains_filter(monkeypatch):
+    """Regression: the Rules API stores hierarchical paths; exact `path=`
+    returned 0 rows in production. Filter must be path__icontains."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    captured = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured["url"] = url
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_advertised_products"}},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_table_schema("amzn_ads_sp_advertised_products")
+
+    assert "path__icontains=amzn_ads_sp_advertised_products" in captured["url"]
+    assert "latest=true" in captured["url"]
+    assert result["attributes"]["path"] == "amazon-ads/amzn_ads_sp_advertised_products"
+
+
+def test_get_table_schema_picks_exact_suffix_when_multiple_match(monkeypatch):
+    """Live-validated case: path__icontains=amzn_ads_sp_campaigns returns
+    three rows (campaigns, campaigns_by_adgroup, campaigns_by_placement).
+    The endswith tie-break must pick the row that ends exactly with the
+    requested bare name."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns"}},
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns_by_adgroup"}},
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns_by_placement"}},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_table_schema("amzn_ads_sp_campaigns")
+
+    assert result["attributes"]["path"] == "amazon-ads/amzn_ads_sp_campaigns"
+
+
+def test_get_table_schema_returns_none_when_no_matches(monkeypatch):
+    """Live-validated case: sp_sales_and_traffic_sku has no rule published.
+    Tool must return None cleanly (not raise, not return an unrelated row)."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text='{"data":[]}',
+            json=lambda: {"data": []},
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_table_schema("sp_sales_and_traffic_sku") is None
+
+
+def test_get_table_schema_returns_none_on_non_200(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(status_code=403, text="forbidden")
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_table_schema("any_table") is None
+
+
+def test_get_table_schema_returns_none_on_non_json(monkeypatch):
+    """A 200 with a non-JSON body (e.g. a proxy error HTML page) must not crash."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="<html>gateway error</html>",
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_table_schema("any_table") is None
+
+
+def test_get_table_schema_strips_master_suffix_in_query(monkeypatch):
+    """Callers may pass '<table>_master' (from get_suggested_table_names);
+    the schema lookup must strip the suffix before searching."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    captured = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured["url"] = url
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {"data": [{"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns"}}]},
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    service.get_table_schema("amzn_ads_sp_campaigns_master")
+
+    # Suffix must be removed before it hits the wire
+    assert "path__icontains=amzn_ads_sp_campaigns&" in captured["url"]
+    assert "_master" not in captured["url"]
 
 
 def test_execute_query_denies_on_validation_error(monkeypatch):
@@ -182,3 +386,411 @@ def test_execute_query_denies_on_validation_error(monkeypatch):
     assert "error" in result[0]
     assert "Query validation unavailable" in result[0]["error"]
     assert result[0]["validation"] == "unavailable"
+
+
+def test_get_amazon_api_access_token_handles_non_json_error_response(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=502,
+            text="bad gateway",
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_api_access_token(123)
+
+    assert result["error"] == "Failed to retrieve Amazon API access token"
+    assert result["status"] == 502
+    assert result["details"] == "bad gateway"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — service.py error path coverage
+#
+# Contracts under test (docs/tool-contracts.md):
+# - execute_query: non-200 / RequestException return structured error dict.
+# - get_table_schema: RequestException returns None; ambiguous multi-match
+#   (no endswith hit) returns None (refuse to guess).
+# - get_amazon_api_access_token: missing/null access_token is an error
+#   shape, not a success-like None-token response.
+# - get_amazon_advertising_profiles: every upstream failure returns [].
+# ---------------------------------------------------------------------------
+
+
+import requests as _requests_module  # noqa: E402  (keep top-of-file tidy in existing file)
+
+
+# --- execute_query ---------------------------------------------------------
+
+
+def test_execute_query_non_200_returns_structured_error(monkeypatch):
+    """A non-200 from the Query API must surface as a structured error dict,
+    not a raised exception or a raw response object."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    async def passing_validation(*args, **kwargs):
+        return {"decision": {"allowed": True}}
+
+    monkeypatch.setattr(service, "validate_query", passing_validation)
+
+    def fake_post(url, json, headers, timeout):
+        return SimpleNamespace(status_code=502, text="bad gateway")
+
+    monkeypatch.setattr(service.requests, "post", fake_post)
+
+    result = asyncio.run(service.execute_query("SELECT 1 LIMIT 1", "acc", ctx=object()))
+
+    assert len(result) == 1
+    assert result[0]["error"] == "Failed to execute query"
+    assert result[0]["status"] == 502
+    assert result[0]["details"] == "bad gateway"
+
+
+def test_execute_query_network_failure_returns_structured_error(monkeypatch):
+    """REGRESSION: RequestException in the query POST path must not propagate
+    — it must be caught and reported via the structured error shape."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    async def passing_validation(*args, **kwargs):
+        return {"decision": {"allowed": True}}
+
+    monkeypatch.setattr(service, "validate_query", passing_validation)
+
+    def raising_post(*args, **kwargs):
+        raise _requests_module.Timeout("query backend unreachable")
+
+    monkeypatch.setattr(service.requests, "post", raising_post)
+
+    result = asyncio.run(service.execute_query("SELECT 1 LIMIT 1", "acc", ctx=object()))
+
+    assert len(result) == 1
+    assert result[0]["error"] == "Query execution failed"
+    assert result[0]["status"] is None
+    assert "unreachable" in result[0]["details"]
+
+
+def test_execute_query_non_json_200_returns_structured_error(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    async def passing_validation(*args, **kwargs):
+        return {"decision": {"allowed": True}}
+
+    monkeypatch.setattr(service, "validate_query", passing_validation)
+
+    def fake_post(url, json, headers, timeout):
+        return SimpleNamespace(
+            status_code=200,
+            text="<html>gateway error</html>",
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(service.requests, "post", fake_post)
+
+    result = asyncio.run(service.execute_query("SELECT 1 LIMIT 1", "acc", ctx=object()))
+
+    assert len(result) == 1
+    assert result[0]["error"] == "Failed to parse query response"
+    assert result[0]["status"] == 200
+
+
+# --- get_table_schema ------------------------------------------------------
+
+
+def test_get_table_schema_network_failure_returns_none(monkeypatch):
+    """REGRESSION: RequestException must not propagate from the Rules API call."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def raising_get(*args, **kwargs):
+        raise _requests_module.ConnectionError("rules API down")
+
+    monkeypatch.setattr(service.requests, "get", raising_get)
+
+    assert service.get_table_schema("amzn_ads_sp_campaigns") is None
+
+
+def test_get_table_schema_returns_none_on_ambiguous_multi_match(monkeypatch):
+    """Contract: when icontains returns multiple rows but none ends with the
+    bare table name, refuse to guess — return None.
+
+    This protects callers from silently receiving the wrong rule when their
+    search term matches several unrelated paths."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    # None of these ends with exactly 'campaigns':
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns_by_adgroup"}},
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns_by_placement"}},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_table_schema("campaigns") is None
+
+
+# --- get_amazon_api_access_token ------------------------------------------
+
+
+def test_get_amazon_api_access_token_happy_path(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        assert url.endswith("/service/amzadv/token/7")
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {"data": {"access_token": "amzn-token", "client_id": "amzn-client"}},
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_api_access_token(7)
+
+    assert result == {"access_token": "amzn-token", "client_id": "amzn-client"}
+
+
+@pytest.mark.parametrize(
+    "body,scenario",
+    [
+        ({"data": {}}, "missing access_token"),
+        ({"data": {"access_token": None, "client_id": "c"}}, "null access_token"),
+        ({"data": {"access_token": "", "client_id": "c"}}, "empty access_token"),
+        ({"data": None}, "data is None"),
+        ({"data": "not-a-dict"}, "data wrong type"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "body",
+)
+def test_get_amazon_api_access_token_treats_missing_or_falsy_as_error(
+    monkeypatch, body, scenario
+):
+    """REGRESSION: earlier behavior returned {'access_token': None, ...} on
+    these payloads, and downstream callers (get_amazon_advertising_profiles)
+    treated the key's presence as 'token available' and silently built
+    broken Authorization headers. Contract: return an error shape."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(status_code=200, text="{}", json=lambda: body)
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_api_access_token(7)
+
+    assert "error" in result, f"scenario: {scenario} — result: {result}"
+    assert result.get("access_token") is None or "access_token" not in result
+
+
+def test_get_amazon_api_access_token_network_failure_returns_error_shape(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def raising_get(*args, **kwargs):
+        raise _requests_module.Timeout("amzadv service unreachable")
+
+    monkeypatch.setattr(service.requests, "get", raising_get)
+
+    result = service.get_amazon_api_access_token(7)
+
+    assert result["error"] == "Amazon API access token request failed"
+    assert result["status"] is None
+    assert "unreachable" in result["details"]
+
+
+def test_get_amazon_api_access_token_non_200_returns_error_shape(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=404,
+            text='{"errors":[{"detail":"not found"}]}',
+            json=lambda: {"errors": [{"detail": "not found"}]},
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_api_access_token(7)
+
+    assert result["error"] == "Failed to retrieve Amazon API access token"
+    assert result["status"] == 404
+
+
+# --- get_amazon_advertising_profiles --------------------------------------
+
+
+def test_get_amazon_advertising_profiles_returns_empty_when_identity_error(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"error": "Remote identity 9 not found."},
+    )
+
+    def fail_token(*args, **kwargs):
+        pytest.fail("token lookup must not happen when identity lookup failed")
+
+    monkeypatch.setattr(service, "get_amazon_api_access_token", fail_token)
+
+    assert service.get_amazon_advertising_profiles(9) == []
+
+
+def test_get_amazon_advertising_profiles_returns_empty_when_token_has_error(monkeypatch):
+    """REGRESSION: token helper's error shape (post-alignment) must short-circuit
+    the profiles call, not produce a broken Authorization header."""
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"id": "9", "region": "na"},
+    )
+    monkeypatch.setattr(
+        service,
+        "get_amazon_api_access_token",
+        lambda rid, ctx=None: {
+            "error": "Amazon API access token missing from response",
+            "status": 200,
+            "details": {},
+        },
+    )
+
+    def fail_profiles(*args, **kwargs):
+        pytest.fail("profiles API must not be called when token has error")
+
+    monkeypatch.setattr(service.requests, "get", fail_profiles)
+
+    assert service.get_amazon_advertising_profiles(9) == []
+
+
+def test_get_amazon_advertising_profiles_unknown_region_returns_empty(monkeypatch):
+    """Unknown region → soft failure (no KeyError)."""
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"id": "9", "region": "mars"},
+    )
+    monkeypatch.setattr(
+        service,
+        "get_amazon_api_access_token",
+        lambda rid, ctx=None: {"access_token": "t", "client_id": "c"},
+    )
+
+    def fail_profiles(*args, **kwargs):
+        pytest.fail("profiles API must not be called for unknown region")
+
+    monkeypatch.setattr(service.requests, "get", fail_profiles)
+
+    assert service.get_amazon_advertising_profiles(9) == []
+
+
+def test_get_amazon_advertising_profiles_non_200_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"id": "9", "region": "na"},
+    )
+    monkeypatch.setattr(
+        service,
+        "get_amazon_api_access_token",
+        lambda rid, ctx=None: {"access_token": "t", "client_id": "c"},
+    )
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(status_code=401, text="unauthorized")
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_amazon_advertising_profiles(9) == []
+
+
+def test_get_amazon_advertising_profiles_network_failure_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"id": "9", "region": "na"},
+    )
+    monkeypatch.setattr(
+        service,
+        "get_amazon_api_access_token",
+        lambda rid, ctx=None: {"access_token": "t", "client_id": "c"},
+    )
+
+    def raising_get(*args, **kwargs):
+        raise _requests_module.ConnectionError("amazon api unreachable")
+
+    monkeypatch.setattr(service.requests, "get", raising_get)
+
+    assert service.get_amazon_advertising_profiles(9) == []
+
+
+def test_get_amazon_advertising_profiles_non_json_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"id": "9", "region": "na"},
+    )
+    monkeypatch.setattr(
+        service,
+        "get_amazon_api_access_token",
+        lambda rid, ctx=None: {"access_token": "t", "client_id": "c"},
+    )
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="<html>oops</html>",
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    assert service.get_amazon_advertising_profiles(9) == []
+
+
+def test_get_amazon_advertising_profiles_happy_path(monkeypatch):
+    """Happy-path smoke to confirm the chain wires up correctly after all
+    the defensive refactors."""
+    monkeypatch.setattr(
+        service,
+        "get_remote_identity_by_id",
+        lambda rid, ctx=None: {"id": "9", "region": "na"},
+    )
+    monkeypatch.setattr(
+        service,
+        "get_amazon_api_access_token",
+        lambda rid, ctx=None: {"access_token": "t", "client_id": "c"},
+    )
+
+    captured = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        return SimpleNamespace(
+            status_code=200,
+            text="[]",
+            json=lambda: [{"profileId": 123}],
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_advertising_profiles(9)
+
+    assert result == [{"profileId": 123}]
+    assert captured["url"] == "https://advertising-api.amazon.com/v2/profiles"
+    assert captured["headers"]["Authorization"] == "Bearer t"
+    assert captured["headers"]["Amazon-Advertising-API-ClientId"] == "c"

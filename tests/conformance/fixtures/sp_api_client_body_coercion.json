@@ -1,0 +1,30 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "sp_api_client — Body coercion error (invalid JSON-like string in request body)",
+    "trigger": "Tool call with stringified JSON for a field that expects a native array/object",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/error_envelope.py",
+    "source_branch": "_format_exception_to_envelope → BodyCoercionError"
+  },
+  "envelope": {
+    "error_kind": "sp_api_client",
+    "tool": "ordersv2_getOrders",
+    "summary": "Invalid JSON-like string in request body field.",
+    "details": [
+      {
+        "path": "marketplaceIds",
+        "issue": "expected JSON array, got malformed string",
+        "received_type": "str"
+      }
+    ],
+    "hints": [
+      "Use a native JSON array/object instead of an invalid string value."
+    ],
+    "examples": [
+      ["ATVPDKIKX0DER"]
+    ],
+    "error_code": "BODY_COERCION_INVALID_JSON",
+    "retryable": true,
+    "_envelope_version": 1
+  }
+}

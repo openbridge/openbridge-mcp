@@ -1,0 +1,26 @@
+# Default-deny: only files explicitly COPY'd in the Dockerfile end up in
+# the image. Without this file the entire build context (including
+# `.env`, `.git`, the local `.venv`, test fixtures, IDE state, caches,
+# and build artifacts) gets baked into the published layer.
+#
+# Security review (2026-04-30) confirmed `/app/.env` had been embedded
+# in built images, exposing OPENBRIDGE_REFRESH_TOKEN values. This file
+# closes that hole.
+*
+
+# Source we DO want — every entry below must match the COPY lines in
+# the Dockerfile or it will be invisible to the build.
+!main.py
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!schemas/
+
+# Re-deny anything that snuck into the allow-listed dirs above.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache

@@ -1,0 +1,32 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "sandbox_runtime — Code Mode sandbox hits a known runtime limitation (e.g., blocked stdlib import)",
+    "trigger": "execute() script attempts `import base64`",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/error_envelope.py",
+    "source_branch": "_format_exception_to_envelope → _is_monty_sandbox_limitation"
+  },
+  "envelope": {
+    "error_kind": "sandbox_runtime",
+    "tool": "execute",
+    "summary": "Code mode sandbox hit a known runtime limitation.",
+    "details": [
+      {
+        "path": "",
+        "issue": "ModuleNotFoundError: No module named 'base64'",
+        "received_type": "MontyRuntimeError"
+      }
+    ],
+    "hints": [
+      "In execute, avoid print/sys.stdout writes.",
+      "In execute, avoid hasattr checks.",
+      "In execute, avoid json.dumps(..., default=...).",
+      "Return dict/list values as final output.",
+      "If needed, call the tool directly outside execute."
+    ],
+    "examples": [],
+    "error_code": "CODE_MODE_SANDBOX_LIMITATION",
+    "retryable": false,
+    "_envelope_version": 1
+  }
+}

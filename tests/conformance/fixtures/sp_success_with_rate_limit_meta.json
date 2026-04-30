@@ -1,0 +1,21 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "Successful response with _meta.rate_limit telemetry (Phase 3)",
+    "trigger": "Any successful SP-API tool call where upstream returned x-amzn-RateLimit-* headers",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/meta_injection_middleware.py",
+    "note": "Demonstrates Phase 3 success-path rate-limit telemetry. The middleware reads the per-call context-var populated by utils/http_client.py:extract_response_meta and merges _meta.rate_limit / _meta.retry_after_seconds into successful dict responses. Absent when upstream did not send the headers."
+  },
+  "response": {
+    "orders": [
+      {"orderId": "123-4567890-1234567", "orderStatus": "Shipped"}
+    ],
+    "_meta": {
+      "rate_limit": {
+        "limit_per_second": 0.5,
+        "remaining": 12.0,
+        "reset_at": "2026-04-25T17:42:33Z"
+      }
+    }
+  }
+}

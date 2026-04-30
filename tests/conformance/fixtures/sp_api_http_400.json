@@ -1,0 +1,35 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "sp_api_http — Upstream SP-API returns HTTP 400 (e.g., enum mismatch the schema accepts as string)",
+    "trigger": "list_identities with identity_type=\"999\" (not in upstream enum)",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/error_envelope.py",
+    "source_branch": "_format_exception_to_envelope → httpx.HTTPStatusError"
+  },
+  "envelope": {
+    "error_kind": "sp_api_http",
+    "tool": "list_identities",
+    "summary": "SP-API request failed with HTTP 400.",
+    "details": [
+      {
+        "path": "identity_type",
+        "issue": "Invalid value '999'. Allowed values: ['1', '2', '17'].",
+        "received_type": "str"
+      }
+    ],
+    "hints": [
+      "Re-check tool input against required schema fields."
+    ],
+    "examples": [],
+    "error_code": "SP_API_HTTP_400",
+    "retryable": false,
+    "_envelope_version": 1,
+    "_meta": {
+      "rate_limit": {
+        "limit_per_second": 0.5,
+        "remaining": 12,
+        "reset_at": "2026-04-25T17:42:33Z"
+      }
+    }
+  }
+}

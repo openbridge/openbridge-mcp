@@ -207,8 +207,12 @@ def _fetch_product_payloads(
     Returns list of payload dictionaries with name, stage_id, and id.
     """
     try:
-        # Add stage_id__gte=1000 filter to avoid duplicates (per product-tables.md)
-        params = {"stage_id__gte": 1000}
+        params = {}
+        is_legacy = stage_ids is not None and 0 in stage_ids
+
+        # Only apply stage_id__gte filter for non-legacy subscriptions
+        if not is_legacy:
+            params["stage_id__gte"] = 1000
 
         response = requests.get(
             f"{PRODUCT_API_BASE_URL}/{product_id}/payloads",
@@ -221,8 +225,8 @@ def _fetch_product_payloads(
 
         payloads = data.get("data", [])
 
-        # Filter by stage_ids if provided
-        if stage_ids is not None:
+        # Filter by stage_ids if provided and not legacy
+        if stage_ids is not None and not is_legacy:
             payloads = [
                 p for p in payloads
                 if p.get("attributes", {}).get("stage_id") in stage_ids

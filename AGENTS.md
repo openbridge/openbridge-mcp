@@ -140,6 +140,23 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
 
 - **Server**
   - `MCP_PORT` (default `8000`): Port for HTTP MCP server
+  - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the HTTP MCP server
+  - `MCP_STATELESS_HTTP` (optional, default `true`): Run FastMCP HTTP transport in stateless mode (fresh transport per request)
+    - Default `true` is safe for multi-instance deployments behind an L7 LB without sticky sessions
+    - Set `false` only if you need streamable HTTP session reuse and have session affinity guaranteed
+
+- **Background tasks (SEP-1686 / Docket)**
+  - `FASTMCP_DOCKET_URL` (default in compose: `redis://redis:6379/0`; out-of-compose default: `memory://`):
+    - Production: the Redis sidecar declared in `docker-compose.yml`. Internal-only (no published ports), reachable from openbridge-mcp via the compose network.
+    - `memory://` is single-process and ephemeral — fine for `make test` and local `python main.py` runs without compose.
+    - Tests pin this to `memory://` via fixtures so the suite stays offline.
+  - `FASTMCP_DOCKET_CONCURRENCY` (optional, default `10`): max concurrent background tasks per worker.
+  - Every Openbridge-API tool registers with `task=TaskConfig(mode="optional")`; clients choose sync vs background per call. `get_capabilities` is exempt (no I/O).
+
+- **Code mode (primary client entry point)**
+  - `CODE_MODE` (default `true`, **recommended on**): Code Mode is the primary surface — clients see only `tags`/`search`/`get_schema`/`execute`. `CODE_MODE=false` exposes the full direct catalog and emits a startup WARNING.
+  - `CODE_MODE_INCLUDE_TAGS` (default `true`): include the optional `tags` discovery meta-tool.
+  - `CODE_MODE_MAX_DURATION_SECS` (default `30`), `CODE_MODE_MAX_MEMORY` (default `50000000`): sandbox limits.
 
 - **Authentication (Dual-Mode)**
   - `OPENBRIDGE_REFRESH_TOKEN` (optional): Token in format `xxx:yyy` for server-side authentication
@@ -147,8 +164,27 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - When unset: Clients must provide `Authorization: Bearer <token>` headers
     - Client tokens take precedence over server tokens
     - Server starts successfully without this variable, enabling pure client-side auth
+  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Multi-tenant safety gate**
+    - When `true`: requests without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`
+    - **Required for any deployment serving more than one Openbridge account** — without it, an unauthenticated request silently executes as the server principal (cross-tenant leak)
+    - Leave `false` for single-tenant or local-dev installs where the server token fallback is intentional
+    - Backstopped at the tool layer: `src/server/tools/base.py` raises `AuthenticationError` if a tool is invoked without a primed JWT while this flag is on
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) for Openbridge HTTP requests
     - Connect timeout is fixed at 10 seconds
+  - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings
+    - Eviction is LRU (active tenants stay resident under churn); replaces the legacy FIFO-32 behavior
+    - Tune up for high-tenant-count deployments; tune down for memory-constrained environments
+    - For shared cross-replica caching, swap `_InMemoryLRUTokenCache` for a `TokenCache`-conforming Redis adapter (see `src/auth/simple.py`)
+
+- **Authentication (OAuth Proxy Mode)** — activated by `OPENBRIDGE_AUTH_MODE=oauth_proxy`
+  - `OPENBRIDGE_AUTH_MODE` (optional, default `"refresh_token"`): Auth mode selector.
+    - `"refresh_token"`: Default — `OpenbridgeAuthMiddleware` exchanges Bearer refresh tokens for JWTs.
+    - `"oauth_proxy"`: FastMCP's built-in `OAuthProxy` handles the full OAuth 2.0 authorization code flow, proxying to Openbridge's OAuth endpoints and verifying tokens via introspection. Mutually exclusive with `refresh_token` mode — cannot coexist with `OpenbridgeAuthMiddleware`.
+  - `MCP_BASE_URL` (required for `oauth_proxy` in production): Externally-reachable base URL of the MCP server, used by FastMCP to construct the OAuth redirect URI. Example: `https://mcp.example.com`. Defaults to `http://{MCP_HOST}:{MCP_PORT}` — always set this explicitly when running behind a reverse proxy.
+  - `MCP_JWT_SIGNING_KEY` (recommended for `oauth_proxy`): Stable secret used by FastMCP to sign the session tokens it issues to MCP clients. If unset, a random UUID is generated per process start — MCP sessions will not survive server restarts. Set to a strong, stable secret for production deployments.
+  - `OPENBRIDGE_OAUTH_CLIENT_ID` (optional, default `"openbridge-mcp"`): Client ID sent to the Openbridge introspection endpoint. The endpoint reads credentials from embedded secrets; this value is forwarded but typically not validated.
+  - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `"not-used"`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
+  - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default `""`): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets; leave empty unless instructed otherwise.
 
 - **Query Validation (AI-powered)**
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable `validate_query` and `execute_query` tools
@@ -157,6 +193,16 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Opt-in to send SQL to LLM
     - When disabled, uses heuristics only (no SQL leaves your environment)
+
+- **Code Mode (default enabled)**
+  - `CODE_MODE` (optional, default `true`): Enables FastMCP code mode as the standard MCP surface (`search`/`get_schema`/`execute`)
+  - `CODE_MODE_INCLUDE_TAGS` (optional, default `true`): Adds `tags` discovery meta-tool
+  - `CODE_MODE_MAX_DURATION_SECS` (optional, default `30`): Sandbox execution timeout for `execute`
+  - `CODE_MODE_MAX_MEMORY` (optional, default `50000000`): Sandbox memory limit in bytes for `execute`
+
+- **Logging**
+  - `LOG_LEVEL` (optional, default `INFO`): Application log level
+  - `LOG_FORMAT` (optional, default `structured`): Log output format (`structured` JSON or `simple` text)
 
 - **Service API Base URLs** (see README.md for full list)
   - `SERVICE_API_BASE_URL`
@@ -172,7 +218,7 @@ The project uses a Makefile for consistency with CI:
 
 ```bash
 make setup      # Create venv with uv (Python 3.13)
-make install    # Install deps from requirements.txt + requirements-dev.txt
+make install    # Install deps from pyproject.toml (project + [dev] extras)
 make lint       # Run ruff check src/ tests/
 make lint-fix   # Auto-fix linting issues
 make format     # Format code with ruff
@@ -375,7 +421,7 @@ Before approving, ask:
 
 ## FastMCP Compatibility
 
-- The repo currently uses `fastmcp>=2.14` (see `requirements.txt`)
+- The repo currently uses `fastmcp>=3.1.0` (see `pyproject.toml`)
 - Context state API: Native `ctx.set_state()` and `ctx.get_state()` available
 - Compatibility shim in `src/auth/authentication.py:19-31` handles older FastMCP releases gracefully
 - If you upgrade FastMCP, update this section and verify middleware, context state, and tool contracts still work
@@ -385,7 +431,7 @@ Before approving, ask:
 - Never commit secrets to version control (`.env` is in `.gitignore`)
 - Validate all external inputs (see `src/utils/security.py`)
 - Use `safe_pagination_url()` for untrusted pagination links (prevents SSRF)
-- JWT signatures are always verified (`jwt_verify_signature=True` in auth config)
+- Client JWTs are passed through by middleware; token signature and authorization checks are enforced by downstream Openbridge APIs
 - Query validation tools prevent SQL injection via LLM sampling + heuristics
 - Set `OPENBRIDGE_ENABLE_LLM_VALIDATION=false` if SQL must not leave your environment
 

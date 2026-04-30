@@ -1,0 +1,21 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "Successful response with _meta.normalized — unknown field passed through (attempted_normalization semantics)",
+    "trigger": "Tool call with a field not in the schema; middleware does not rewrite, but emits the event",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/sidecar_middleware.py",
+    "note": "Demonstrates attempted_normalization rule: events are emitted even when no mutation occurred."
+  },
+  "response": {
+    "orders": [],
+    "_meta": {
+      "normalized": [
+        {
+          "kind": "unknown_field_passed_through",
+          "field": "newAmazonFieldNotInSpec",
+          "reason": "no_schema_match"
+        }
+      ]
+    }
+  }
+}
