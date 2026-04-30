@@ -20,6 +20,7 @@ from src.server.tools.tool_manifest import TOOL_MANIFEST  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
 from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
 from src.auth.manager import get_auth_manager  # noqa: E402
+from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy  # noqa: E402
 from src.server.code_mode import create_code_mode_transform, is_code_mode_enabled  # noqa: E402
 from src.server.sampling import create_sampling_handler  # noqa: E402
 
@@ -105,29 +106,40 @@ def _async_wrap(sync_func: Callable[..., Any]) -> Callable[..., Any]:
 
 def create_mcp_server() -> FastMCP:
     """Create and configure the MCP server."""
-    # Create middleware stack
-
-    # Configure JWT middleware
     auth_cfg = create_openbridge_config()
-    auth_manager = get_auth_manager()
-    middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
-
     sampling_handler = create_sampling_handler()
 
-    # Initialize FastMCP server with background tasks enabled.
-    # tasks=True makes the SEP-1686 background-task surface available
-    # for any tool registered with task=TaskConfig(...). The Docket
-    # backend URL is read from FASTMCP_DOCKET_URL (defaults to
-    # memory:// — single-process; production compose sets
-    # redis://redis:6379/0).
-    mcp = FastMCP(
+    _MCP_KWARGS = dict(
         name="Openbridge MCP",
         instructions="Openbridge MCP server for utilizing a variety of API endpoints and tools.",
         sampling_handler=sampling_handler,
         tasks=True,
     )
-    for mw in middleware:
-        mcp.add_middleware(mw)
+
+    if auth_cfg.auth_mode == "oauth_proxy":
+        # FastMCP's OAuthProxy handles the full OAuth flow and token
+        # introspection. The bridge middleware then copies the verified
+        # access token into the ContextVar so all existing tools work
+        # without modification.
+        logger.info("Configuring MCP in oauth_proxy mode with FastMCP OAuthProxy and introspection")
+        mcp_port = int(os.getenv("MCP_PORT", 8000))
+        mcp_host = os.getenv("MCP_HOST", "localhost")
+        base_url = os.getenv("MCP_BASE_URL", f"http://{mcp_host}:{mcp_port}")
+        logger.info("OAuth Proxy base URL set to: %s", base_url)
+        oauth = create_oauth_proxy(base_url=base_url)
+        logger.info("OAuth Proxy created successfully, initializing FastMCP with OAuthProxy auth")
+        mcp = FastMCP(**_MCP_KWARGS, auth=oauth)
+        mcp.add_middleware(OAuthBridgeMiddleware())
+        logger.info("Auth mode: oauth_proxy (FastMCP OAuthProxy + introspection, base_url=%s)", base_url)
+    else:
+        # Default: refresh_token mode — existing OpenbridgeAuthMiddleware
+        # exchanges Bearer refresh tokens for JWTs.
+        auth_manager = get_auth_manager()
+        middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
+        mcp = FastMCP(**_MCP_KWARGS)
+        for mw in middleware:
+            mcp.add_middleware(mw)
+        logger.info("Auth mode: refresh_token (Bearer/exchange middleware)")
 
     registered_tool_names = set()
 
@@ -222,5 +234,6 @@ def create_mcp_server() -> FastMCP:
         )
 
     _log_capability_summary()
-    _warn_if_server_token_fallback_open()
+    if auth_cfg.auth_mode != "oauth_proxy":
+        _warn_if_server_token_fallback_open()
     return mcp

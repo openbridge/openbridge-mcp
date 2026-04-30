@@ -59,10 +59,19 @@ Required for server and tools to function. Values typically point to your enviro
   - `LOG_LEVEL` (optional, default `INFO`): Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
   - `LOG_FORMAT` (optional, default `structured`): Log format (`structured` JSON or `simple` text).
 - Authentication
-  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication. When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
-  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Required for multi-tenant deployments.** When `true`, requests that arrive without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`. Prevents cross-tenant data leakage by ensuring every tool call runs under the caller's own credential. Leave `false` for single-tenant or local-dev installs.
+  - `OPENBRIDGE_AUTH_MODE` (optional, default `refresh_token`): Selects the authentication mode. Two mutually exclusive options:
+    - `refresh_token` (default): `OpenbridgeAuthMiddleware` extracts `Authorization: Bearer` headers, exchanges Openbridge refresh tokens (`xxx:yyy`) for short-lived JWTs, and caches results per-tenant. See below for single- vs multi-tenant config.
+    - `oauth_proxy`: FastMCP's built-in `OAuthProxy` takes over. The server advertises OAuth 2.0 metadata, proxies the authorization code flow to Openbridge's auth service, and verifies access tokens via token introspection. MCP clients authenticate through a browser-based OAuth flow rather than passing raw tokens. See [OAuth Proxy Mode](#oauth-proxy-mode) below.
+  - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication (`refresh_token` mode only). When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
+  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Required for multi-tenant deployments** (`refresh_token` mode). When `true`, requests that arrive without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`. Prevents cross-tenant data leakage by ensuring every tool call runs under the caller's own credential. Leave `false` for single-tenant or local-dev installs. Not applicable in `oauth_proxy` mode — the OAuthProxy enforces authentication at the transport layer.
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
-  - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings. Raise this for deployments that serve more concurrent tenants than the default. Lower it to constrain memory in resource-tight environments. Eviction is LRU, so active tenants stay resident under churn.
+  - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings (`refresh_token` mode only). Raise this for deployments that serve more concurrent tenants than the default. Lower it to constrain memory in resource-tight environments. Eviction is LRU, so active tenants stay resident under churn.
+- Authentication — OAuth Proxy Mode (`OPENBRIDGE_AUTH_MODE=oauth_proxy`)
+  - `MCP_BASE_URL` (**required in production**): Externally-reachable base URL of this server, used by FastMCP to construct the OAuth redirect URI. Must match the URL your MCP clients and browsers use to reach the server. Example: `https://mcp.yourcompany.com`. Defaults to `http://{MCP_HOST}:{MCP_PORT}` — always override this when running behind a reverse proxy.
+  - `MCP_JWT_SIGNING_KEY` (recommended): Stable secret used by FastMCP to sign the session tokens it issues to MCP clients. If unset, a random key is generated per process start and all active MCP sessions break on server restart. Set to any strong, stable secret for production deployments.
+  - `OPENBRIDGE_OAUTH_CLIENT_ID` (optional, default `openbridge-mcp`): Client ID sent to Openbridge's OAuth introspection endpoint. The endpoint reads credentials from embedded secrets, so this value is forwarded but typically not validated. Override only if explicitly required.
+  - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `not-used`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
+  - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default empty): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets — leave empty unless instructed otherwise.
 - Query Validation (AI-powered)
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools use AI-powered sampling to validate SQL queries and ensure they follow best practices (read-only operations, proper LIMIT clauses, etc.). Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
@@ -75,16 +84,19 @@ Required for server and tools to function. Values typically point to your enviro
   - `CODE_MODE_MAX_MEMORY` (optional, default `50000000`): Sandbox memory limit in bytes for `execute`.
   - Dependency note: Code mode requires `fastmcp[code-mode]` (includes sandbox dependencies such as pydantic-monty).
 
-Example `.env` template:
+Example `.env` template (refresh_token mode — the default):
 ```bash
 # Server settings
 MCP_PORT=8000
 # MCP_HOST=0.0.0.0
 
-# Authentication settings
+# Authentication — refresh_token mode (default)
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
 # Optional timeout in seconds (connect timeout fixed at 10s)
 OPENBRIDGE_API_TIMEOUT=45
+# Required for multi-tenant deployments; rejects requests without a Bearer header
+# OPENBRIDGE_REQUIRE_CLIENT_AUTH=true
+
 # Opt-in to AI validation; by default only heuristics run and no SQL leaves your environment
 OPENBRIDGE_ENABLE_LLM_VALIDATION=false
 
@@ -95,6 +107,32 @@ FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
 
 # Code mode (default true). Set false to expose full direct tool catalog.
 CODE_MODE=true
+
+# Optional logging controls
+# LOG_LEVEL=INFO
+# LOG_FORMAT=structured
+```
+
+Example `.env` template (oauth_proxy mode):
+```bash
+# Server settings
+MCP_PORT=8000
+MCP_HOST=0.0.0.0
+
+# Authentication — OAuth Proxy mode
+OPENBRIDGE_AUTH_MODE=oauth_proxy
+
+# Externally-reachable URL used to construct the OAuth redirect URI.
+# Must match the URL your clients use to reach this server.
+MCP_BASE_URL=https://mcp.yourcompany.com
+
+# Stable signing key for FastMCP session tokens — sessions break on
+# restart if this is not set. Use any strong, stable secret.
+MCP_JWT_SIGNING_KEY=your-strong-stable-secret-here
+
+# Introspection credentials — defaults work for most Openbridge deployments
+# OPENBRIDGE_OAUTH_CLIENT_ID=openbridge-mcp
+# OPENBRIDGE_OAUTH_CLIENT_SECRET=not-used
 
 # Optional logging controls
 # LOG_LEVEL=INFO

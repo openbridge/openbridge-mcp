@@ -45,6 +45,9 @@ async def _set_context_state(ctx, key: str, value: str) -> None:
     setattr(ctx, key, value)
 
 
+_VALID_AUTH_MODES = {"refresh_token", "oauth_proxy"}
+
+
 @dataclass
 class AuthConfig:
     """Configuration for Openbridge authentication."""
@@ -58,6 +61,9 @@ class AuthConfig:
     # to the server's OPENBRIDGE_REFRESH_TOKEN. Set this in any deployment
     # that serves more than one tenant from a shared instance.
     require_client_auth: bool = False
+    # Auth mode: "refresh_token" (default) uses OpenbridgeAuthMiddleware;
+    # "oauth_proxy" uses FastMCP's built-in OAuthProxy with introspection.
+    auth_mode: str = "refresh_token"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -82,6 +88,22 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return default
 
 
+def _parse_auth_mode(raw: str | None) -> str:
+    """Return a validated auth mode string, falling back to 'refresh_token' on bad input."""
+    if raw is None:
+        return "refresh_token"
+    normalized = raw.strip().lower()
+    if normalized in _VALID_AUTH_MODES:
+        return normalized
+    logger.warning(
+        "OPENBRIDGE_AUTH_MODE=%r is not a recognized mode %s; "
+        "falling back to 'refresh_token'",
+        raw,
+        sorted(_VALID_AUTH_MODES),
+    )
+    return "refresh_token"
+
+
 def create_openbridge_config() -> AuthConfig:
     """Return an AuthConfig, reading AUTH_ENABLED from the environment.
 
@@ -92,14 +114,19 @@ def create_openbridge_config() -> AuthConfig:
     closed for any request without an ``Authorization: Bearer`` header
     rather than executing as the server's principal. Required for any
     multi-tenant deployment.
+
+    When ``OPENBRIDGE_AUTH_MODE`` is ``"oauth_proxy"``, FastMCP's built-in
+    OAuthProxy is used instead of ``OpenbridgeAuthMiddleware``.
     """
     enabled = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+    auth_mode = _parse_auth_mode(os.getenv("OPENBRIDGE_AUTH_MODE"))
     return AuthConfig(
         enabled=enabled,
         refresh_token_enabled=enabled,
         jwt_validation_enabled=enabled,
         jwt_verify_signature=True,
         require_client_auth=_env_flag("OPENBRIDGE_REQUIRE_CLIENT_AUTH", default=False),
+        auth_mode=auth_mode,
     )
 
 
@@ -177,6 +204,7 @@ class OpenbridgeAuthMiddleware(Middleware):
             not client_token
             and self._require_client_auth
             and http_request_seen
+            and not _parse_auth_mode(os.getenv("OPENBRIDGE_AUTH_MODE") == "oauth_proxy")
         ):
             logger.warning(
                 "Rejecting request: OPENBRIDGE_REQUIRE_CLIENT_AUTH=true and no Bearer token present"

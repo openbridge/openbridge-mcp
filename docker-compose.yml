@@ -42,6 +42,27 @@ services:
       # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false in `.env`. See README.md
       # → "Per-client authentication".
       OPENBRIDGE_REQUIRE_CLIENT_AUTH: ${OPENBRIDGE_REQUIRE_CLIENT_AUTH:-true}
+      # Auth mode: "refresh_token" (default) uses the Bearer-token exchange
+      # middleware. "oauth_proxy" activates FastMCP's built-in OAuthProxy,
+      # which proxies the full OAuth 2.0 flow to Openbridge's auth service
+      # and verifies tokens via introspection. The two modes are mutually
+      # exclusive — choose one per deployment.
+      OPENBRIDGE_AUTH_MODE: ${OPENBRIDGE_AUTH_MODE:-refresh_token}
+      # Required when OPENBRIDGE_AUTH_MODE=oauth_proxy: the externally-
+      # reachable base URL of this server, used by FastMCP to construct the
+      # OAuth redirect URI. Must match the URL clients use to reach the
+      # server — set this to your public hostname when behind a reverse proxy.
+      # Example: https://mcp.yourcompany.com
+      # MCP_BASE_URL: ${MCP_BASE_URL:-}
+      # Stable secret for signing FastMCP session tokens in oauth_proxy mode.
+      # If unset, a random key is generated per process start (sessions break
+      # on container restart). Set to a strong, stable secret for production.
+      # MCP_JWT_SIGNING_KEY: ${MCP_JWT_SIGNING_KEY:-}
+      OPENBRIDGE_OAUTH_CLIENT_ID: ${OPENBRIDGE_OAUTH_CLIENT_ID:-openbridge-mcp}
+      OPENBRIDGE_OAUTH_CLIENT_SECRET: ${OPENBRIDGE_OAUTH_CLIENT_SECRET:-not-used}
+      # Upstream client_id forwarded to /auth/oauth/initialize. Leave empty
+      # unless instructed otherwise by Openbridge support.
+      # OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID: ${OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID:-}
     ports:
       # `main.py` binds to MCP_PORT inside the container, so both sides of
       # the mapping follow the same env var. Dockerfile EXPOSE 8000 is

@@ -176,6 +176,16 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Tune up for high-tenant-count deployments; tune down for memory-constrained environments
     - For shared cross-replica caching, swap `_InMemoryLRUTokenCache` for a `TokenCache`-conforming Redis adapter (see `src/auth/simple.py`)
 
+- **Authentication (OAuth Proxy Mode)** — activated by `OPENBRIDGE_AUTH_MODE=oauth_proxy`
+  - `OPENBRIDGE_AUTH_MODE` (optional, default `"refresh_token"`): Auth mode selector.
+    - `"refresh_token"`: Default — `OpenbridgeAuthMiddleware` exchanges Bearer refresh tokens for JWTs.
+    - `"oauth_proxy"`: FastMCP's built-in `OAuthProxy` handles the full OAuth 2.0 authorization code flow, proxying to Openbridge's OAuth endpoints and verifying tokens via introspection. Mutually exclusive with `refresh_token` mode — cannot coexist with `OpenbridgeAuthMiddleware`.
+  - `MCP_BASE_URL` (required for `oauth_proxy` in production): Externally-reachable base URL of the MCP server, used by FastMCP to construct the OAuth redirect URI. Example: `https://mcp.example.com`. Defaults to `http://{MCP_HOST}:{MCP_PORT}` — always set this explicitly when running behind a reverse proxy.
+  - `MCP_JWT_SIGNING_KEY` (recommended for `oauth_proxy`): Stable secret used by FastMCP to sign the session tokens it issues to MCP clients. If unset, a random UUID is generated per process start — MCP sessions will not survive server restarts. Set to a strong, stable secret for production deployments.
+  - `OPENBRIDGE_OAUTH_CLIENT_ID` (optional, default `"openbridge-mcp"`): Client ID sent to the Openbridge introspection endpoint. The endpoint reads credentials from embedded secrets; this value is forwarded but typically not validated.
+  - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `"not-used"`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
+  - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default `""`): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets; leave empty unless instructed otherwise.
+
 - **Query Validation (AI-powered)**
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable `validate_query` and `execute_query` tools
     - Without this, query validation tools are not registered

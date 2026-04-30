@@ -6,6 +6,7 @@ from src.server import mcp_server
 class FakeAuthConfig:
     def __init__(self):
         self.enabled = False
+        self.auth_mode = "refresh_token"
 
 
 class FakeFastMCP:
