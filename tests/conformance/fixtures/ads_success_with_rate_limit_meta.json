@@ -1,0 +1,21 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_ads_mcp",
+    "scenario": "Successful response with _meta.rate_limit telemetry (Phase 3)",
+    "trigger": "Any successful Amazon Ads API tool call where upstream returned X-RateLimit-* headers",
+    "source_module": "amazon_ads_mcp/src/amazon_ads_mcp/middleware/meta_injection_middleware.py",
+    "note": "Demonstrates Phase 3 success-path rate-limit telemetry on Ads. Mirrors SP's shape exactly even though the Amazon Ads API uses different header names (X-RateLimit-* vs SP's x-amzn-ratelimit-*). The wire format is identical across servers; only the per-server header parsing differs."
+  },
+  "response": {
+    "campaigns": [
+      {"campaignId": "1234567890", "name": "Holiday SP", "state": "enabled"}
+    ],
+    "_meta": {
+      "rate_limit": {
+        "limit_per_second": 10.0,
+        "remaining": 7.0,
+        "reset_at": "1714074153"
+      }
+    }
+  }
+}

@@ -1,8 +1,47 @@
 
 services:
+  redis:
+    # Redis-compatible task queue + storage backend for FastMCP background
+    # tasks (via Docket: https://gofastmcp.com/servers/tasks). User chose
+    # the docs-recommended Redis 7 image. The container is *not* exposed
+    # to the host — only the openbridge-mcp service on the compose
+    # network can reach it. AOF persistence to a named volume keeps the
+    # task queue durable across container restarts.
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   openbridge-mcp:
-    build: .
-    platform: linux/amd64
+    # Local: `docker compose build` then `docker compose up` uses this Dockerfile.
+    # CI/registry: publish multi-arch with
+    # `docker buildx build --platform linux/amd64,linux/arm64 --push` and
+    # `docker compose pull` if you prefer a pre-built image instead of building.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openbridge-mcp:latest
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # Docket / FastMCP background-tasks backend. Internal compose DNS
+      # resolves "redis" to the sidecar above. No public ingress.
+      FASTMCP_DOCKET_URL: redis://redis:6379/0
+      # Multi-tenant fail-closed by default for the production stack.
+      # When this is true, requests without an Authorization: Bearer
+      # header are rejected with McpError(-32001) instead of silently
+      # executing as the OPENBRIDGE_REFRESH_TOKEN principal. Operators
+      # running a single-tenant install can override by setting
+      # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false in `.env`. See README.md
+      # → "Per-client authentication".
+      OPENBRIDGE_REQUIRE_CLIENT_AUTH: ${OPENBRIDGE_REQUIRE_CLIENT_AUTH:-true}
     ports:
       # `main.py` binds to MCP_PORT inside the container, so both sides of
       # the mapping follow the same env var. Dockerfile EXPOSE 8000 is
@@ -14,3 +53,7 @@ services:
         target: /app/.env
         read_only: true
     restart: unless-stopped
+
+volumes:
+  redis-data:
+    # Persists Redis AOF file across container recreate / image upgrade.

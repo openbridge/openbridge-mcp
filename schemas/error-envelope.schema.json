@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/openbridge/openbridge-mcp/schemas/error-envelope.schema.json",
+  "title": "MCP Error Envelope (v1)",
+  "description": "Cross-server error envelope contract. See CONTRACT.md for full specification.",
+  "type": "object",
+  "required": [
+    "error_kind",
+    "tool",
+    "summary",
+    "details",
+    "hints",
+    "examples",
+    "error_code",
+    "retryable",
+    "_envelope_version"
+  ],
+  "properties": {
+    "error_kind": {
+      "type": "string",
+      "enum": [
+        "mcp_input_validation",
+        "tool_not_found",
+        "sp_api_http",
+        "ads_api_http",
+        "sp_api_client",
+        "ads_api_client",
+        "auth_error",
+        "rate_limited",
+        "sandbox_runtime",
+        "internal_error"
+      ],
+      "description": "Closed enum. See CONTRACT.md for per-server availability."
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "MCP tool name that failed. 'unknown_tool' if unknowable."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One-line human-readable summary."
+    },
+    "details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "issue", "received_type"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Dotted path to the field. Empty string when not applicable."
+          },
+          "issue": {
+            "type": "string",
+            "description": "Human-readable description of the issue."
+          },
+          "received_type": {
+            "type": "string",
+            "description": "Type name of the value that triggered the issue."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "hints": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Actionable next steps. Server may bound length."
+    },
+    "examples": {
+      "type": "array",
+      "description": "Optional examples of valid input. May be empty."
+    },
+    "error_code": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "description": "Stable machine-readable code in UPPER_SNAKE_CASE."
+    },
+    "retryable": {
+      "type": "boolean",
+      "description": "Whether retrying with the same input could succeed."
+    },
+    "_envelope_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Currently 1. Bumped on contract evolution."
+    },
+    "legacy_error_kind": {
+      "type": "string",
+      "description": "Optional. Prior error_kind value during a one-release migration window."
+    },
+    "_meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "normalized": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "renamed",
+                  "dropped_alias",
+                  "coerced",
+                  "unknown_field_passed_through",
+                  "unknown_field_rejected"
+                ]
+              },
+              "from": {"type": "string"},
+              "to": {"type": "string"},
+              "field": {"type": "string"},
+              "from_type": {"type": "string"},
+              "to_type": {"type": "string"},
+              "canonical": {"type": "string"},
+              "reason": {"type": "string"}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"kind": {"const": "renamed"}}},
+                "then": {"required": ["from", "to"]}
+              },
+              {
+                "if": {"properties": {"kind": {"const": "dropped_alias"}}},
+                "then": {"required": ["from", "canonical"]}
+              },
+              {
+                "if": {"properties": {"kind": {"const": "coerced"}}},
+                "then": {"required": ["field", "from_type", "to_type"]}
+              },
+              {
+                "if": {"properties": {"kind": {"const": "unknown_field_passed_through"}}},
+                "then": {"required": ["field"]}
+              },
+              {
+                "if": {"properties": {"kind": {"const": "unknown_field_rejected"}}},
+                "then": {"required": ["field"]}
+              }
+            ],
+            "additionalProperties": true
+          }
+        },
+        "rate_limit": {
+          "type": "object",
+          "description": "Optional. Emitted only when at least one value is parseable from upstream headers.",
+          "properties": {
+            "limit_per_second": {
+              "type": ["number", "string"],
+              "description": "Numeric when parseable; raw string otherwise."
+            },
+            "remaining": {
+              "type": ["number", "string"],
+              "description": "Numeric when parseable; raw string otherwise."
+            },
+            "reset_at": {
+              "type": "string",
+              "description": "Raw upstream value. ISO-8601 preferred."
+            }
+          },
+          "additionalProperties": false
+        },
+        "retry_after_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Seconds to wait before retry. Parsed from Retry-After header."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "summary", "details", "hints"],
+            "properties": {
+              "kind": {"type": "string"},
+              "summary": {"type": "string"},
+              "details": {"type": "array"},
+              "hints": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

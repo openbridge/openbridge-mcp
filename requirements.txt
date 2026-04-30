@@ -1,5 +1,0 @@
-fastmcp[code-mode]>=3.1.0
-python-dotenv
-requests
-pydantic
-PyJWT

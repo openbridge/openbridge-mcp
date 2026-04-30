@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from inspect import isawaitable
 from typing import Dict, Optional
 from urllib.parse import urljoin, urlparse
@@ -11,6 +12,18 @@ from src.utils.logging import get_logger
 from src.utils.security import ValidationError, validate_url
 
 logger = get_logger("base_tools")
+
+
+def _require_client_auth_enabled() -> bool:
+    """Return True when ``OPENBRIDGE_REQUIRE_CLIENT_AUTH`` is set truthy.
+
+    Read at call time rather than import time so test fixtures can
+    monkeypatch the env per-test without resetting module state.
+    """
+    raw = os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH")
+    if not raw:
+        return False
+    return raw.strip().lower() in {"true", "1", "yes", "on"}
 
 
 def _get_context_jwt(ctx) -> Optional[str]:
@@ -58,6 +71,19 @@ def get_auth_headers(ctx=None) -> Dict[str, str]:
             jwt_token[:12],
         )
         return {"Authorization": f"Bearer {jwt_token}"}
+
+    # Multi-tenant fail-closed backstop: if the deployment requires
+    # per-tenant auth, never silently fall back to the server token or
+    # an empty header. The middleware is the primary gate, but tools
+    # invoked without a request-scoped context (e.g. internal callers,
+    # background jobs) must also refuse to leak the server principal.
+    if _require_client_auth_enabled():
+        raise AuthenticationError(
+            "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled but no per-tenant "
+            "JWT was resolved for this call. Refusing to fall back to the "
+            "server refresh token. Ensure the request carries an "
+            "Authorization: Bearer header."
+        )
 
     try:
         auth = get_auth()

@@ -6,15 +6,23 @@ import logging
 import os
 from inspect import isawaitable
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
+import jwt as pyjwt
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from mcp import McpError
+from mcp.types import ErrorData
 
 from .session_state import set_request_jwt
-from .simple import OpenbridgeAuth, get_auth, is_refresh_token
+from .simple import AuthenticationError, OpenbridgeAuth, get_auth, is_refresh_token
 
 logger = logging.getLogger(__name__)
+
+# JSON-RPC error code used for authentication failures. The MCP spec reserves
+# -32000..-32099 for server-defined errors; -32001 is our convention for
+# "auth failed — credential rejected by upstream".
+AUTH_ERROR_CODE = -32001
 
 JWT_CONTEXT_ATTR = "_openbridge_jwt"
 JWT_PUBLIC_ATTR = "jwt_token"
@@ -45,6 +53,33 @@ class AuthConfig:
     refresh_token_enabled: bool = True
     jwt_validation_enabled: bool = True
     jwt_verify_signature: bool = True
+    # Multi-tenant safety: when True, requests without a client-provided
+    # Authorization header are rejected outright rather than falling back
+    # to the server's OPENBRIDGE_REFRESH_TOKEN. Set this in any deployment
+    # that serves more than one tenant from a shared instance.
+    require_client_auth: bool = False
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable.
+
+    Accepts ``true``/``false``/``1``/``0``/``yes``/``no`` (case-insensitive).
+    Anything else falls back to *default* — boot-time config typos must not
+    silently flip security-relevant flags.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    logger.warning(
+        "%s=%r is not a recognized boolean; falling back to default %s",
+        name, raw, default,
+    )
+    return default
 
 
 def create_openbridge_config() -> AuthConfig:
@@ -52,6 +87,11 @@ def create_openbridge_config() -> AuthConfig:
 
     When AUTH_ENABLED is set to 'false' (case-insensitive), authentication
     middleware is disabled. Used for local development and testing.
+
+    When ``OPENBRIDGE_REQUIRE_CLIENT_AUTH`` is true, the middleware fails
+    closed for any request without an ``Authorization: Bearer`` header
+    rather than executing as the server's principal. Required for any
+    multi-tenant deployment.
     """
     enabled = os.getenv("AUTH_ENABLED", "true").lower() != "false"
     return AuthConfig(
@@ -59,6 +99,7 @@ def create_openbridge_config() -> AuthConfig:
         refresh_token_enabled=enabled,
         jwt_validation_enabled=enabled,
         jwt_verify_signature=True,
+        require_client_auth=_env_flag("OPENBRIDGE_REQUIRE_CLIENT_AUTH", default=False),
     )
 
 
@@ -77,30 +118,84 @@ class OpenbridgeAuthMiddleware(Middleware):
     server-side ``OPENBRIDGE_REFRESH_TOKEN`` environment variable.
     """
 
-    def __init__(self, auth: OpenbridgeAuth):
+    def __init__(self, auth: OpenbridgeAuth, *, require_client_auth: bool = False):
         super().__init__()
         self._auth = auth
+        self._require_client_auth = require_client_auth
 
     async def on_request(self, context: MiddlewareContext, call_next):
         if not context.fastmcp_context:
             return await call_next(context)
 
         jwt_token = None
+        client_token: Optional[str] = None
+        http_request_seen = False
 
-        # Priority 1: Check for client-provided Authorization header
+        # Priority 1: Extract a client-provided Authorization header.
+        # Header extraction itself must not raise — unauthenticated endpoints
+        # (health, list tools) should still work without a Bearer token.
         try:
             http_request = get_http_request()
             if http_request:
+                http_request_seen = True
                 auth_header = http_request.headers.get("authorization", "")
                 if auth_header.lower().startswith("bearer "):
-                    client_token = auth_header.split(" ", 1)[1].strip()
-                    if client_token:
-                        jwt_token = self._resolve_client_token(client_token)
+                    candidate = auth_header.split(" ", 1)[1].strip()
+                    if candidate:
+                        client_token = candidate
         except Exception as exc:
+            # Header extraction failure is benign — fall back to server token.
             logger.warning("Could not extract client Authorization header: %s", exc)
 
-        # Priority 2: Fall back to server's refresh token
-        if not jwt_token:
+        # Priority 1b: Resolve the client token into a JWT. A failure here
+        # (refresh-token rejected, auth API unreachable, malformed response)
+        # is NOT benign — surface it as a JSON-RPC auth error so the client
+        # knows its credential was rejected instead of silently falling back
+        # to the server token and returning data for the wrong account.
+        if client_token:
+            try:
+                jwt_token = self._resolve_client_token(client_token)
+            except AuthenticationError as exc:
+                logger.warning("Client token exchange failed: %s", exc)
+                raise McpError(
+                    ErrorData(
+                        code=AUTH_ERROR_CODE,
+                        message=(
+                            "Client-provided Openbridge token could not be exchanged for a JWT. "
+                            "Verify the Authorization: Bearer header carries a valid refresh token "
+                            "(format: xxx:yyy) or an unexpired JWT."
+                        ),
+                    )
+                ) from exc
+
+        # Multi-tenant fail-closed: when require_client_auth is on and we
+        # actually saw an HTTP request (so this isn't a stdio/list_tools
+        # call) but no client token was provided, refuse to fall back to
+        # the server's refresh token. Executing under a shared principal
+        # in a multi-tenant deployment is a cross-account data leak.
+        if (
+            not client_token
+            and self._require_client_auth
+            and http_request_seen
+        ):
+            logger.warning(
+                "Rejecting request: OPENBRIDGE_REQUIRE_CLIENT_AUTH=true and no Bearer token present"
+            )
+            raise McpError(
+                ErrorData(
+                    code=AUTH_ERROR_CODE,
+                    message=(
+                        "This server requires a per-tenant Authorization: Bearer "
+                        "credential. Server-token fallback is disabled because "
+                        "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled."
+                    ),
+                )
+            )
+
+        # Priority 2: Fall back to server's refresh token only when there
+        # was no client credential at all and the deployment hasn't opted
+        # into strict per-tenant auth.
+        if not jwt_token and not client_token:
             try:
                 jwt_token = self._auth.get_jwt()
                 logger.debug("Using server refresh token to generate JWT")
@@ -113,6 +208,7 @@ class OpenbridgeAuthMiddleware(Middleware):
         # invoked from Code Mode's sandbox (which receive a fresh
         # Context instance) can still see the resolved token.
         if jwt_token:
+            _log_jwt_identity(jwt_token)
             set_request_jwt(jwt_token)
             await _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
             await _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
@@ -127,6 +223,9 @@ class OpenbridgeAuthMiddleware(Middleware):
         If the token looks like an Openbridge refresh token (``xxx:yyy``)
         it is exchanged for a JWT via the auth API.  Otherwise it is
         assumed to already be a JWT and is returned as-is.
+
+        Raises:
+            AuthenticationError: If the refresh token cannot be exchanged.
         """
         if is_refresh_token(token):
             logger.debug("Client token is a refresh token — exchanging for JWT")
@@ -134,6 +233,43 @@ class OpenbridgeAuthMiddleware(Middleware):
 
         logger.debug("Client token appears to be a JWT — using directly (length: %d)", len(token))
         return token
+
+
+def _safe_decode_claims(jwt_token: str) -> Dict[str, Any]:
+    """Decode a JWT's claims *without* verifying the signature.
+
+    For logging / diagnostic use only. Signature verification and
+    authorization are enforced by downstream Openbridge APIs, not here —
+    we just want to know which account the JWT is asserting so operators
+    can tell client tokens apart from server fallbacks.
+    """
+    try:
+        return pyjwt.decode(jwt_token, options={"verify_signature": False}) or {}
+    except Exception:  # pragma: no cover - defensive
+        return {}
+
+
+def _log_jwt_identity(jwt_token: str) -> None:
+    """Emit a debug-level line identifying the JWT's subject/account.
+
+    No-op when the debug log level is disabled so we don't pay the decode
+    cost in production.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    claims = _safe_decode_claims(jwt_token)
+    account_id = (
+        claims.get("account_id")
+        or claims.get("account")
+        or claims.get("aid")
+    )
+    subject = claims.get("sub") or claims.get("user_id") or claims.get("uid")
+    logger.debug(
+        "JWT identity: sub=%s account_id=%s exp=%s",
+        subject,
+        account_id,
+        claims.get("exp") or claims.get("expires_at"),
+    )
 
 
 def create_auth_middleware(
@@ -154,7 +290,12 @@ def create_auth_middleware(
         return []
 
     auth = auth_manager or get_auth()
-    return [OpenbridgeAuthMiddleware(auth)]
+    return [
+        OpenbridgeAuthMiddleware(
+            auth,
+            require_client_auth=config.require_client_auth,
+        )
+    ]
 
 
 __all__: Iterable[str] = [

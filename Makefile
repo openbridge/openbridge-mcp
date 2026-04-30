@@ -1,4 +1,4 @@
-.PHONY: setup test lint serve clean help
+.PHONY: setup test lint serve clean help smoke-redis
 
 help:  ## Show this help message
 	@echo "Available targets:"
@@ -11,8 +11,7 @@ setup:  ## Install dependencies in a new virtual environment
 	@echo "Then run 'make install' to install dependencies"
 
 install:  ## Install all dependencies (requires active venv)
-	uv pip install -r requirements.txt -r requirements-dev.txt
-	uv pip install -e .
+	uv pip install -e ".[dev]"
 
 test:  ## Run tests with pytest
 	AUTH_ENABLED=false uv run pytest tests/ -v
@@ -42,3 +41,6 @@ clean:  ## Remove Python cache files and artifacts
 	rm -f pytest.xml
 
 all: lint check test  ## Run all quality checks
+
+smoke-redis:  ## Live smoke: prove Redis sidecar backs FastMCP cache (requires Docker)
+	./scripts/smoke-redis-cache.sh

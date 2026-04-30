@@ -77,7 +77,14 @@ def test_is_code_mode_enabled_respects_false_value(monkeypatch):
 @pytest.fixture
 def _stub_fastmcp_transforms(monkeypatch):
     """Provide a fake ``fastmcp.experimental.transforms.code_mode`` module
-    so create_code_mode_transform can import without the extras package."""
+    so create_code_mode_transform can import without the extras package.
+
+    Uses ``monkeypatch.setitem`` for sys.modules so the original module
+    (now installed via the production runtime extras) is restored at
+    teardown. Without this, the stubbed ``_Fake`` class would leak into
+    later tests that build a real CodeMode transform — those tests
+    would then crash with ``'_Fake' object has no attribute 'list_tools'``.
+    """
     import sys
     import types
 
@@ -93,16 +100,20 @@ def _stub_fastmcp_transforms(monkeypatch):
     stub.MontySandboxProvider = _Fake
     stub.Search = _Fake
 
-    # Walk/register parent modules too so the import machinery resolves.
+    # Use monkeypatch.setitem so the previous module (real one if loaded,
+    # else absent) is restored at teardown. Walking parent modules is
+    # only needed if the real module isn't present — defensive for older
+    # FastMCP installs.
     for name in (
         "fastmcp",
         "fastmcp.experimental",
         "fastmcp.experimental.transforms",
-        "fastmcp.experimental.transforms.code_mode",
     ):
         if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
-    sys.modules["fastmcp.experimental.transforms.code_mode"] = stub
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(
+        sys.modules, "fastmcp.experimental.transforms.code_mode", stub,
+    )
 
 
 def test_create_code_mode_transform_happy_path(_stub_fastmcp_transforms, monkeypatch):

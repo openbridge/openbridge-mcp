@@ -9,11 +9,15 @@ class FakeAuthConfig:
 
 
 class FakeFastMCP:
-    def __init__(self, *, name, instructions, sampling_handler):
+    def __init__(self, *, name, instructions, sampling_handler, tasks=False):
         self.name = name
         self.instructions = instructions
         self.middleware = []
         self.sampling_handler = sampling_handler
+        # tasks=True flips on background-task support; the production
+        # construction site passes it unconditionally so the fake must
+        # accept and remember the value for assertion.
+        self.tasks_enabled = tasks
         self.registered_tools = {}
         self.custom_routes = {}
         self.transforms = []
@@ -21,9 +25,15 @@ class FakeFastMCP:
     def add_middleware(self, mw):
         self.middleware.append(mw)
 
-    def tool(self, *, name, description):
+    def tool(self, *, name, description, task=None):
+        # Capture the optional task config so tests can assert on it
+        # without forcing every tool to be a coroutine in the fake.
         def decorator(func):
-            self.registered_tools[name] = {"description": description, "func": func}
+            self.registered_tools[name] = {
+                "description": description,
+                "func": func,
+                "task": task,
+            }
             return func
 
         return decorator

@@ -2,6 +2,7 @@ import os
 from typing import List, Optional
 
 import requests
+from fastmcp.exceptions import ToolError
 from fastmcp.server.context import Context
 
 from src.utils.logging import get_logger
@@ -10,6 +11,11 @@ from .base import get_api_timeout, get_auth_headers, safe_pagination_url
 logger = get_logger("remote_identities")
 
 REMOTE_IDENTITY_API_BASE_URL = os.getenv("REMOTE_IDENTITY_API_BASE_URL", 'https://remote-identity.api.openbridge.io')
+
+# HTTP statuses where we refuse to return a silent empty list. Returning
+# [] on an auth failure would mislead the caller into thinking the account
+# has no remote identities, when in fact the credential was rejected.
+_AUTH_FAILURE_STATUSES = frozenset({401, 403})
 
 def get_remote_identities(
     remote_identity_type_id: Optional[str] = None,
@@ -26,12 +32,13 @@ def get_remote_identities(
         List[dict]: A list of remote identities.
     """
     params = {}
-    remote_identities = []
+    remote_identities: List[dict] = []
     headers = get_auth_headers(ctx)
 
     if remote_identity_type_id:
         params['remote_identity_type'] = remote_identity_type_id
     next_page_url = f"{REMOTE_IDENTITY_API_BASE_URL}/ri?page=1"
+    first_page = True
     while next_page_url:
         try:
             response = requests.get(
@@ -56,7 +63,29 @@ def get_remote_identities(
                 (payload.get('links', {}) if isinstance(payload, dict) else {}).get('next', None),
                 REMOTE_IDENTITY_API_BASE_URL,
             )
+            first_page = False
+        elif response.status_code in _AUTH_FAILURE_STATUSES and first_page:
+            # Auth rejected on the very first call — returning [] here would
+            # silently masquerade as "no identities." Raise so the caller
+            # (and the MCP client) sees the actual failure mode.
+            logger.warning(
+                "Remote identities auth failure: %s. The supplied JWT was "
+                "rejected by %s — verify the Authorization header carries a "
+                "valid Openbridge credential.",
+                response.status_code,
+                REMOTE_IDENTITY_API_BASE_URL,
+            )
+            raise ToolError(
+                f"Remote identity API rejected credentials "
+                f"(HTTP {response.status_code}). The Openbridge JWT was not "
+                "accepted — check that the Authorization: Bearer header "
+                "carries a valid refresh token (xxx:yyy) or unexpired JWT, "
+                "and that the token belongs to the expected account."
+            )
         else:
+            # Non-auth error (5xx, 404, or mid-pagination auth failure):
+            # preserve the partial-results contract — log and return what
+            # we already collected.
             logger.warning(f"Failed to retrieve remote identities: {response.status_code}")
             break
     return remote_identities

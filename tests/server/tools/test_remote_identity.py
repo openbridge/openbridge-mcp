@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests as _requests
+from fastmcp.exceptions import ToolError
 
 from src.server.tools import remote_identity
 
@@ -59,6 +60,8 @@ def test_get_remote_identities_uses_correct_type_param(monkeypatch):
 
 
 def test_get_remote_identities_stops_on_failure(monkeypatch):
+    """Non-auth failure (5xx) on first page preserves partial-results
+    contract: returns []."""
     monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, headers=None, params=None, timeout=None):
@@ -69,6 +72,58 @@ def test_get_remote_identities_stops_on_failure(monkeypatch):
     identities = remote_identity.get_remote_identities()
 
     assert identities == []
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_get_remote_identities_raises_on_auth_failure(monkeypatch, status):
+    """REGRESSION guard: auth failure on /ri must NOT masquerade as
+    "no identities." 401/403 on the first call must raise ToolError so
+    the MCP client sees the rejected-credential mode.
+    """
+    monkeypatch.setattr(
+        remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "Bearer stale"}
+    )
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return SimpleNamespace(status_code=status, json=lambda: {})
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    with pytest.raises(ToolError) as exc_info:
+        remote_identity.get_remote_identities()
+
+    # The message should guide the caller toward the Authorization header,
+    # not leak a generic "something went wrong."
+    assert "credentials" in str(exc_info.value).lower() or "rejected" in str(exc_info.value).lower()
+    assert str(status) in str(exc_info.value)
+
+
+def test_get_remote_identities_mid_pagination_401_returns_partial(monkeypatch):
+    """Mid-pagination auth failure is unusual but must not raise — the
+    JWT is unlikely to have just been revoked mid-call, and the caller
+    has already consumed page 1. Preserve partial-results contract."""
+    monkeypatch.setattr(
+        remote_identity, "get_auth_headers", lambda ctx=None: {"Authorization": "token"}
+    )
+
+    responses = [
+        SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "data": [{"id": "ri-1"}],
+                "links": {"next": "https://remote-identity.api.openbridge.io/ri?page=2"},
+            },
+        ),
+        SimpleNamespace(status_code=401, json=lambda: {}),
+    ]
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return responses.pop(0)
+
+    monkeypatch.setattr(remote_identity.requests, "get", fake_get)
+
+    # Must not raise; returns the rows collected on page 1.
+    assert remote_identity.get_remote_identities() == [{"id": "ri-1"}]
 
 
 def test_get_remote_identity_by_id_success(monkeypatch):

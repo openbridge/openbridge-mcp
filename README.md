@@ -7,18 +7,37 @@ Detailed below are setup and configuration instructions for a local machine, but
 
 ### Docker deployment
 1. Create a `.env` file at the project root with the variables listed below. The compose file mounts it into the container at `/app/.env`.
-2. Build and start the stack: `docker compose up --build -d openbridge-mcp`
+2. Build and start the stack: `docker compose up --build -d`
    - The compose file maps `8000:8000`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
+   - The stack also starts a small **Redis sidecar** that backs FastMCP's background-task queue (see *Topology* below).
 3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
 4. Connect your MCP client to your server. If you did this locally, the address would look like: `http://localhost:8000/mcp` (or the port you chose). Running this on a remote server on Cloudflare, the URL would look like `https://mcp-openbridge-mcp.6fdec1c7650b77137a09f6fa4f2c9ca8.workers.dev`.
 
 If you need as Intel/AMD compatable environment, you can build for both like this: `docker buildx build --platform linux/amd64,linux/arm64 -t openbridgeops/openbridge-mcp:latest .` and then start it with `docker run --env-file .env -p 8000:8000 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
 
+#### Topology
+
+```
+                ┌──────────────────────────┐
+   client ──►   │  openbridge-mcp:${PORT}  │  (only public ingress)
+                │  Code Mode meta-tools    │
+                │  + FastMCP tasks worker  │
+                └──────┬───────────────────┘
+                       │  redis://redis:6379/0
+                       ▼  (compose-internal DNS)
+                ┌──────────────────────────┐
+                │  redis:7-alpine          │  (no published ports)
+                │  AOF → redis-data volume │
+                └──────────────────────────┘
+```
+
+The Redis sidecar is **only reachable from the openbridge-mcp container** — no `ports:` block is published to the host. The MCP container is the only ingress and egress for Redis traffic. Redis persists its append-only file to a named volume (`redis-data`) so the task queue survives container restarts. To wipe state for a clean dev re-run: `docker compose down -v`.
+
 ### Local deployment
 As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to create and configure a virtual environment.
 
 1. Create a `.env` in the project's root folder (see Variables below). At minimum set `MCP_PORT`. Optionally set `OPENBRIDGE_REFRESH_TOKEN` for server-side authentication (clients can also provide tokens via Authorization headers).
-2. Run the command `uv venv --python 3.13 && uv pip install -r requirements.txt`
+2. Run the command `uv venv --python 3.13 && uv pip install -e ".[dev]"`
 3. Start the server:
    - Python: `python main.py`
    - The server listens on `${MCP_HOST:-0.0.0.0}:${MCP_PORT}` using HTTP transport.
@@ -30,12 +49,20 @@ Required for server and tools to function. Values typically point to your enviro
 - Server
   - `MCP_PORT` (default `8000`): Port for the HTTP MCP server. The container exposes `8000` internally; `docker-compose.yml` publishes it as `${MCP_PORT:-8000}` on the host, so set `MCP_PORT` in `.env` if you need a different host port.
   - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the MCP server.
+  - `MCP_STATELESS_HTTP` (optional, default `true`): Run FastMCP's HTTP transport in stateless mode (a fresh transport per request). The default is safe for multi-instance deployments behind an L7 load balancer without sticky sessions. Set to `false` only if your deployment needs streamable HTTP session reuse and you can guarantee session affinity.
+- Background tasks (SEP-1686)
+  - `FASTMCP_DOCKET_URL` (default in compose: `redis://redis:6379/0`): Docket backend URL. The bundled Redis sidecar is reachable only on the compose-internal network; the openbridge-mcp container resolves `redis` via Docker DNS and is the only ingress to Redis. Use `memory://` for a single-process dev run with no compose file (tasks won't survive restart).
+  - `FASTMCP_DOCKET_CONCURRENCY` (optional, default `10`): Maximum number of concurrent background tasks per worker. Tune for your Openbridge HTTP capacity.
+- Code mode (primary client entry point)
+  - `CODE_MODE` (default `true`): Code mode is the **recommended** client entry point — clients see only `tags`/`search`/`get_schema`/`execute` and use Python in a sandbox to call individual Openbridge tools. Setting `CODE_MODE=false` falls back to the direct tool catalog (every tool exposed by name) and emits a startup WARNING; only do this if you have a specific compatibility need.
 - Logging
   - `LOG_LEVEL` (optional, default `INFO`): Application log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
   - `LOG_FORMAT` (optional, default `structured`): Log format (`structured` JSON or `simple` text).
 - Authentication
   - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication. When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
+  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Required for multi-tenant deployments.** When `true`, requests that arrive without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`. Prevents cross-tenant data leakage by ensuring every tool call runs under the caller's own credential. Leave `false` for single-tenant or local-dev installs.
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
+  - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings. Raise this for deployments that serve more concurrent tenants than the default. Lower it to constrain memory in resource-tight environments. Eviction is LRU, so active tenants stay resident under churn.
 - Query Validation (AI-powered)
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools use AI-powered sampling to validate SQL queries and ensure they follow best practices (read-only operations, proper LIMIT clauses, etc.). Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
@@ -330,7 +357,8 @@ MCP: Calls execute_query(query="SELECT * FROM orders_master... LIMIT 100",
 - Networking
   - Server binds to all interfaces (`0.0.0.0`). Ensure firewall/network rules allow your MCP client to reach `MCP_PORT`.
 - Per-client authentication
-  - The MCP server uses a single `OPENBRIDGE_REFRESH_TOKEN` for all tool calls; downstream access is shared across clients.
-  - Deployers must layer their own client authentication (e.g., network isolation, mTLS proxies, signed client configs, or OS-level ACLs) to ensure only trusted agents can invoke the server.
-  - Rotate tokens regularly and monitor access logs to detect misuse when multiple operators share the same deployment.
+  - **Single-tenant** (one operator, one Openbridge account): `OPENBRIDGE_REFRESH_TOKEN` alone is sufficient. The server exchanges it for short-lived JWTs and uses the same principal for every tool call.
+  - **Multi-tenant** (one shared server instance, many distinct Openbridge accounts): set `OPENBRIDGE_REQUIRE_CLIENT_AUTH=true` so the server rejects any request lacking an `Authorization: Bearer` header. Each client must send its own refresh token (`xxx:yyy`) or unexpired JWT in that header; the server resolves it on a per-request basis and never substitutes the server-side token. Without this flag, an unauthenticated request would silently execute as the server's principal — a cross-tenant data leak.
+  - Layer additional client authentication (network isolation, mTLS proxies, signed client configs, OS-level ACLs) as appropriate for your trust model.
+  - Rotate tokens regularly and monitor access logs to detect misuse.
   - You can also plug FastMCP's standard authentication providers directly into this server (JWT validation, OAuth proxy, WorkOS AuthKit, etc.) if you prefer first-class per-client auth at the MCP layer; choose the provider that aligns with your org's identity stack.

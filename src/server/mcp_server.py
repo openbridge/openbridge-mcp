@@ -1,6 +1,12 @@
+import asyncio
+import functools
+import inspect
 import os
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any, Callable
+
 from fastmcp import FastMCP
+from fastmcp.server.tasks import TaskConfig
 from starlette.responses import JSONResponse
 
 from src.server.tools import remote_identity as remote_identity_tools  # noqa: E402
@@ -42,6 +48,61 @@ def _log_capability_summary() -> None:
         runtime["code_mode_enabled"],
     )
 
+
+def _warn_if_server_token_fallback_open() -> None:
+    """Emit a startup WARNING when the server-token fallback is reachable.
+
+    Multi-tenant deployments must set ``OPENBRIDGE_REQUIRE_CLIENT_AUTH=true``
+    so requests without a Bearer header are rejected instead of silently
+    executing as the principal of ``OPENBRIDGE_REFRESH_TOKEN``. Today the
+    flag defaults to false (backward-compat for single-tenant installs)
+    — but if an operator has *also* configured a server refresh token,
+    that combination is the cross-tenant leak shape the security review
+    flagged. Surface it loudly at boot rather than waiting for the wrong
+    account to receive someone else's data.
+    """
+    server_token_set = bool(os.getenv("OPENBRIDGE_REFRESH_TOKEN"))
+    if not server_token_set:
+        return
+    raw_flag = (os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH") or "").strip().lower()
+    require_client_auth = raw_flag in {"true", "1", "yes", "on"}
+    if require_client_auth:
+        return
+    logger.warning(
+        "OPENBRIDGE_REFRESH_TOKEN is set but OPENBRIDGE_REQUIRE_CLIENT_AUTH is not enabled. "
+        "Requests without an Authorization: Bearer header will execute as the server principal. "
+        "This is fine for single-tenant deployments; for ANY multi-tenant deployment set "
+        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=true to fail closed and avoid cross-tenant data leakage."
+    )
+
+def _is_async_callable(func: Callable[..., Any]) -> bool:
+    """True for ``async def`` functions and partials wrapping them."""
+    target = func
+    while isinstance(target, functools.partial):
+        target = target.func
+    return inspect.iscoroutinefunction(target)
+
+
+def _async_wrap(sync_func: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a synchronous tool implementation in an async coroutine.
+
+    FastMCP's ``TaskConfig`` requires task-enabled tools to be async — a
+    sync function would raise ``ValueError`` on registration. The
+    Openbridge tool layer is currently built on the synchronous
+    ``requests`` library; rather than rewrite every tool in this PR we
+    offload each sync call to a worker thread via ``asyncio.to_thread``.
+    The signature (including ``ctx`` keyword) is preserved via
+    ``functools.wraps`` so FastMCP's parameter introspection still
+    resolves the right schema.
+    """
+
+    @functools.wraps(sync_func)
+    async def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(sync_func, *args, **kwargs)
+
+    return _wrapper
+
+
 def create_mcp_server() -> FastMCP:
     """Create and configure the MCP server."""
     # Create middleware stack
@@ -53,28 +114,47 @@ def create_mcp_server() -> FastMCP:
 
     sampling_handler = create_sampling_handler()
 
-    # Initialize FastMCP server
+    # Initialize FastMCP server with background tasks enabled.
+    # tasks=True makes the SEP-1686 background-task surface available
+    # for any tool registered with task=TaskConfig(...). The Docket
+    # backend URL is read from FASTMCP_DOCKET_URL (defaults to
+    # memory:// — single-process; production compose sets
+    # redis://redis:6379/0).
     mcp = FastMCP(
         name="Openbridge MCP",
         instructions="Openbridge MCP server for utilizing a variety of API endpoints and tools.",
         sampling_handler=sampling_handler,
+        tasks=True,
     )
     for mw in middleware:
         mcp.add_middleware(mw)
 
     registered_tool_names = set()
 
-    def register_tool(name: str, func):
-        mcp.tool(
-            name=name,
-            description=TOOL_MANIFEST[name]["description"],
-        )(func)
+    # Default policy: every Openbridge-API tool can be slow (network
+    # I/O, paginated calls, history sweeps) so we make background-task
+    # execution OPTIONAL — clients choose per call. Tools without
+    # task=... fall through to "forbidden" by FastMCP's default.
+    DEFAULT_TASK_CONFIG = TaskConfig(mode="optional")
+
+    def register_tool(name: str, func, *, task: TaskConfig | None = DEFAULT_TASK_CONFIG):
+        impl = func if _is_async_callable(func) else _async_wrap(func)
+        decorator_kwargs: dict[str, Any] = {
+            "name": name,
+            "description": TOOL_MANIFEST[name]["description"],
+        }
+        if task is not None:
+            decorator_kwargs["task"] = task
+        mcp.tool(**decorator_kwargs)(impl)
         registered_tool_names.add(name)
 
-    # Register tools
+    # Register tools.
+    # get_capabilities is a pure local function (no network); leaving it
+    # task=None keeps it synchronous and out of the Docket queue.
     register_tool(
         "get_capabilities",
         lambda: capabilities_tools.build_capabilities(registered_tool_names),
+        task=None,
     )
     # Remote identity tools
     register_tool("get_remote_identities", remote_identity_tools.get_remote_identities)
@@ -126,7 +206,8 @@ def create_mcp_server() -> FastMCP:
             transform = create_code_mode_transform()
             mcp.add_transform(transform)
             logger.info(
-                "Code mode active: tool surface is meta-tools (search/get_schema/execute). Set CODE_MODE=false to opt out."
+                "Code mode active: tool surface is meta-tools (search/get_schema/execute). "
+                "This is the recommended client entry point. Set CODE_MODE=false to expose the direct tool catalog instead."
             )
         except ImportError as exc:
             logger.error(
@@ -135,7 +216,11 @@ def create_mcp_server() -> FastMCP:
                 exc,
             )
     else:
-        logger.info("Code mode disabled (CODE_MODE=false). Exposing direct tool catalog.")
+        logger.warning(
+            "Code mode disabled (CODE_MODE=false). Exposing direct tool catalog as a fallback. "
+            "Code mode is the recommended primary entry point — re-enable it (unset CODE_MODE or set CODE_MODE=true) unless you have a specific reason to expose every tool by name."
+        )
 
     _log_capability_summary()
+    _warn_if_server_token_fallback_open()
     return mcp

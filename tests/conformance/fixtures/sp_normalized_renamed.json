@@ -1,0 +1,24 @@
+{
+  "_fixture_meta": {
+    "server": "amazon_sp_mcp",
+    "scenario": "Successful response with _meta.normalized — PascalCase MarketplaceIds rewritten to canonical marketplaceIds before validation",
+    "trigger": "ordersv2_getOrders called with MarketplaceIds (PascalCase)",
+    "source_module": "amazon_sp_mcp/src/amazon_sp_mcp/server/sidecar_middleware.py",
+    "note": "This is a SUCCESS response, not an error envelope. It demonstrates _meta.normalized emission on the success path. Required env: MCP_SCHEMA_KEY_NORMALIZATION_META=true."
+  },
+  "response": {
+    "orders": [
+      {"orderId": "123-4567890-1234567", "orderStatus": "Shipped"}
+    ],
+    "_meta": {
+      "normalized": [
+        {
+          "kind": "renamed",
+          "from": "MarketplaceIds",
+          "to": "marketplaceIds",
+          "reason": "schema_canonical_key"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,136 @@
+name: Docker publish
+
+# Runs the same multi-arch buildx push that's done manually:
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     --tag openbridgeops/openbridge-mcp:latest --push .
+#
+# Triggered on version tags (v*), after a successful Release workflow run,
+# or on manual dispatch. Requires two repo secrets:
+#   - DOCKERHUB_USERNAME
+#   - DOCKERHUB_TOKEN  (Docker Hub access token, not the account password)
+#
+# Skip this workflow by not setting the secrets — the push step will be
+# skipped rather than failing.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (default: latest + git sha)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Skip the workflow_run trigger unless the upstream Release succeeded.
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout
+        # workflow_run runs in the context of the *triggering* run; without
+        # an explicit ref, actions/checkout would default to the head of
+        # the default branch — that may not be the commit the Release
+        # workflow actually validated. Bind to the upstream SHA so the
+        # published image corresponds 1:1 to the reviewed/released commit.
+        # For other triggers (push of v* tags, manual dispatch) the
+        # default checkout already points at the right ref.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up QEMU
+        # Needed for cross-arch builds on the amd64 GitHub runner.
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Check Docker Hub credentials
+        id: creds
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN not set — skipping push."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.creds.outputs.ok == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve build SHA
+        id: sha
+        # For workflow_run we want every downstream tag and label to use
+        # the upstream Release commit, not the latest default-branch SHA.
+        # For tag pushes / manual dispatch, GITHUB_SHA already points at
+        # the right place.
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            BUILD_SHA="${{ github.event.workflow_run.head_sha }}"
+          else
+            BUILD_SHA="${GITHUB_SHA}"
+          fi
+          echo "value=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short=${BUILD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute tags
+        id: tags
+        run: |
+          # Always push :latest and :<git-sha>. If a version tag (v*)
+          # triggered the run, also push the bare version (e.g. 1.2.3).
+          IMAGE=openbridgeops/openbridge-mcp
+          TAGS="${IMAGE}:latest,${IMAGE}:${{ steps.sha.outputs.short }}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAGS="${TAGS},${IMAGE}:${VERSION}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        if: steps.creds.outputs.ok == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          # Stamp provenance so consumers can verify the image came from
+          # the exact commit the Release workflow validated.
+          labels: |
+            org.opencontainers.image.revision=${{ steps.sha.outputs.value }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          provenance: true
+          # Use GitHub Actions cache so successive runs only rebuild changed
+          # layers. Scoped per-branch/tag to keep caches from interfering.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build-only (no credentials)
+        if: steps.creds.outputs.ok != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.sha.outputs.value }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
