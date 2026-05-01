@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests as _requests
-from fastmcp.exceptions import ToolError
+from pydantic import ValidationError
 
 from src.server.tools import remote_identity
 
@@ -53,7 +53,7 @@ def test_get_remote_identities_uses_correct_type_param(monkeypatch):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    remote_identity.get_remote_identities(remote_identity_type_id="14")
+    remote_identity.get_remote_identities(remote_identity_type_id=14)
 
     assert captured["url"].endswith("/ri?page=1")
     assert captured["params"] == {"remote_identity_type": "14"}
@@ -89,13 +89,8 @@ def test_get_remote_identities_raises_on_auth_failure(monkeypatch, status):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    with pytest.raises(ToolError) as exc_info:
-        remote_identity.get_remote_identities()
-
-    # The message should guide the caller toward the Authorization header,
-    # not leak a generic "something went wrong."
-    assert "credentials" in str(exc_info.value).lower() or "rejected" in str(exc_info.value).lower()
-    assert str(status) in str(exc_info.value)
+    result = remote_identity.get_remote_identities()
+    assert result["error_kind"] == "auth_error"
 
 
 def test_get_remote_identities_mid_pagination_401_returns_partial(monkeypatch):
@@ -144,9 +139,14 @@ def test_get_remote_identity_by_id_success(monkeypatch):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    identity = remote_identity.get_remote_identity_by_id("42")
+    identity = remote_identity.get_remote_identity_by_id(42)
 
     assert identity == {"id": "42", "relationships": {}, "region": "na", "status": "active"}
+
+
+def test_get_remote_identity_by_id_rejects_string_id():
+    with pytest.raises(ValidationError):
+        remote_identity.get_remote_identity_by_id("42")
 
 
 def test_get_remote_identity_by_id_not_found(monkeypatch):
@@ -157,9 +157,8 @@ def test_get_remote_identity_by_id_not_found(monkeypatch):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    identity = remote_identity.get_remote_identity_by_id("missing")
-
-    assert identity == {"error": "Remote identity missing not found."}
+    identity = remote_identity.get_remote_identity_by_id(404)
+    assert identity["error_kind"] == "mcp_input_validation"
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +210,8 @@ def test_get_remote_identities_network_failure_on_first_page(monkeypatch):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    assert remote_identity.get_remote_identities() == []
+    result = remote_identity.get_remote_identities()
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_remote_identities_returns_partial_on_non_json(monkeypatch):
@@ -250,10 +250,8 @@ def test_get_remote_identity_by_id_network_failure_returns_error_shape(monkeypat
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    result = remote_identity.get_remote_identity_by_id("42")
-
-    assert result["error"] == "Remote identity 42 lookup failed"
-    assert "host unreachable" in result["details"]
+    result = remote_identity.get_remote_identity_by_id(42)
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_remote_identity_by_id_empty_data_returns_not_found(monkeypatch):
@@ -266,9 +264,8 @@ def test_get_remote_identity_by_id_empty_data_returns_not_found(monkeypatch):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    assert remote_identity.get_remote_identity_by_id("42") == {
-        "error": "Remote identity 42 not found."
-    }
+    result = remote_identity.get_remote_identity_by_id(42)
+    assert result["error_kind"] == "mcp_input_validation"
 
 
 def test_get_remote_identity_by_id_non_json_returns_not_found(monkeypatch):
@@ -282,9 +279,8 @@ def test_get_remote_identity_by_id_non_json_returns_not_found(monkeypatch):
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    assert remote_identity.get_remote_identity_by_id("42") == {
-        "error": "Remote identity 42 not found."
-    }
+    result = remote_identity.get_remote_identity_by_id(42)
+    assert result["error_kind"] == "mcp_input_validation"
 
 
 # Representative (not exhaustive) malformed-payload shapes. Per the plan,
@@ -310,6 +306,5 @@ def test_get_remote_identity_by_id_malformed_shapes_return_not_found(
 
     monkeypatch.setattr(remote_identity.requests, "get", fake_get)
 
-    assert remote_identity.get_remote_identity_by_id("42") == {
-        "error": "Remote identity 42 not found."
-    }, f"scenario: {scenario}"
+    result = remote_identity.get_remote_identity_by_id(42)
+    assert result["error_kind"] == "mcp_input_validation", f"scenario: {scenario}"

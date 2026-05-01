@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
 from src.server.tools import products
 
 
@@ -123,6 +126,7 @@ def test_list_product_tables_by_product_id(monkeypatch):
     """Test listing tables for a product by ID."""
     monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
     monkeypatch.setattr(products, "PRODUCT_API_BASE_URL", "https://product.test")
+    monkeypatch.setattr(products, "_search_rules_for_term", lambda term, headers: [])
 
     def fake_get(url, params=None, headers=None, timeout=None):
         assert url == "https://product.test/50/payloads"
@@ -154,10 +158,11 @@ def test_list_product_tables_by_product_id(monkeypatch):
 
     results = products.list_product_tables(product_id=50)
 
-    assert len(results) == 2
-    assert results[0]["name"] == "amzn_ads_sb_campaigns"
-    assert results[0]["stage_id"] == 1004
-    assert results[0]["id"] == 2184
+    assert results["product_id"] == 50
+    assert len(results["tables"]) == 2
+    assert results["tables"][0]["lookup_key"] == "amzn_ads_sb_adgroups"
+    assert results["tables"][0]["stage_id"] == 1004
+    assert results["tables"][0]["id"] == 2185
 
 
 def test_list_product_tables_with_subscription(monkeypatch):
@@ -165,6 +170,7 @@ def test_list_product_tables_with_subscription(monkeypatch):
     monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
     monkeypatch.setattr(products, "PRODUCT_API_BASE_URL", "https://product.test")
     monkeypatch.setattr(products, "SUBSCRIPTIONS_API_BASE_URL", "https://subscriptions.test")
+    monkeypatch.setattr(products, "_search_rules_for_term", lambda term, headers: [])
 
     call_count = {"spm": 0, "payloads": 0}
 
@@ -226,9 +232,9 @@ def test_list_product_tables_with_subscription(monkeypatch):
 
     assert call_count["spm"] == 1
     assert call_count["payloads"] == 1
-    assert len(results) == 2  # Only 1004 and 1005, not 9999
-    assert results[0]["name"] == "amzn_ads_sb_campaigns"
-    assert results[1]["name"] == "amzn_ads_sb_adgroups"
+    assert len(results["tables"]) == 2  # Only 1004 and 1005, not 9999
+    lookup_keys = {item["lookup_key"] for item in results["tables"]}
+    assert lookup_keys == {"amzn_ads_sb_campaigns", "amzn_ads_sb_adgroups"}
 
 
 def test_list_product_tables_subscription_fallback(monkeypatch):
@@ -236,6 +242,7 @@ def test_list_product_tables_subscription_fallback(monkeypatch):
     monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
     monkeypatch.setattr(products, "PRODUCT_API_BASE_URL", "https://product.test")
     monkeypatch.setattr(products, "SUBSCRIPTIONS_API_BASE_URL", "https://subscriptions.test")
+    monkeypatch.setattr(products, "_search_rules_for_term", lambda term, headers: [])
 
     call_count = {"spm": 0, "sub": 0, "payloads": 0}
 
@@ -289,9 +296,9 @@ def test_list_product_tables_subscription_fallback(monkeypatch):
     assert call_count["spm"] == 1
     assert call_count["sub"] == 1
     assert call_count["payloads"] == 1
-    assert len(results) == 1
-    assert results[0]["name"] == "fb_insights_page"
-    assert results[0]["stage_id"] == 0
+    assert len(results["tables"]) == 1
+    assert results["tables"][0]["lookup_key"] == "fb_insights_page"
+    assert results["tables"][0]["stage_id"] == 0
 
 
 def test_list_product_tables_error_handling(monkeypatch):
@@ -306,8 +313,12 @@ def test_list_product_tables_error_handling(monkeypatch):
 
     results = products.list_product_tables(product_id=50)
 
-    assert len(results) == 1
-    assert "error" in results[0]
+    assert results["error_kind"] == "internal_error"
+
+
+def test_list_product_tables_rejects_string_product_id():
+    with pytest.raises(ValidationError):
+        products.list_product_tables(product_id="50")
 
 
 def test_search_products_pagination(monkeypatch):
@@ -387,3 +398,90 @@ def test_fetch_product_payloads_legacy_no_filter(monkeypatch):
     assert "stage_id__gte" not in captured_params
     assert len(results) == 2
     assert results[0]["name"] == "table_a"
+
+
+def test_list_product_tables_includes_rules_only_discoverables(monkeypatch):
+    monkeypatch.setattr(products, "PRODUCT_API_BASE_URL", "https://product.test")
+    monkeypatch.setattr(products, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if url == "https://product.test/78/payloads":
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {
+                    "data": [
+                        {
+                            "id": "2333",
+                            "attributes": {"name": "sp_orders", "stage_id": 1000},
+                        }
+                    ]
+                },
+            )
+
+        if url == "https://service.test/service/rules/prod/v1/rules/search":
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text="{}",
+                json=lambda: {
+                    "data": [
+                        {
+                            "attributes": {
+                                "path": "selling-partner/orders/sp_orders",
+                                "destination": {"tablename": "sp_orders_master"},
+                            }
+                        },
+                        {
+                            "attributes": {
+                                "path": "selling-partner/reports-sales/sp_orders_report",
+                                "destination": {"tablename": "sp_orders_report_v14"},
+                            }
+                        },
+                    ]
+                },
+            )
+
+        raise AssertionError(f"unexpected call: {url} params={params}")
+
+    monkeypatch.setattr(products.requests, "get", fake_get)
+
+    result = products.list_product_tables(product_id=78)
+
+    assert result["product_id"] == 78
+    by_key = {item["lookup_key"]: item for item in result["tables"]}
+    assert "sp_orders" in by_key
+    assert by_key["sp_orders"]["id"] == 2333
+    assert "sp_orders_report" in by_key
+    assert "id" not in by_key["sp_orders_report"]
+    assert "stage_id" not in by_key["sp_orders_report"]
+
+
+def test_list_product_tables_empty_returns_table_not_found_envelope(monkeypatch):
+    monkeypatch.setattr(products, "PRODUCT_API_BASE_URL", "https://product.test")
+    monkeypatch.setattr(products, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if url == "https://product.test/78/payloads":
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                json=lambda: {"data": []},
+            )
+        if url == "https://service.test/service/rules/prod/v1/rules/search":
+            return SimpleNamespace(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text='{"data": []}',
+                json=lambda: {"data": []},
+            )
+        raise AssertionError(f"unexpected call: {url}")
+
+    monkeypatch.setattr(products.requests, "get", fake_get)
+
+    result = products.list_product_tables(product_id=78)
+
+    assert result["error_kind"] == "mcp_input_validation"
+    assert result["error_code"] == "TABLE_NOT_FOUND"

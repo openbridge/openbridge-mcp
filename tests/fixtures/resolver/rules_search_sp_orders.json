@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "attributes": {
+        "path": "selling-partner/orders/sp_orders",
+        "destination": {
+          "tablename": "sp_orders_master"
+        }
+      }
+    },
+    {
+      "attributes": {
+        "path": "selling-partner/reports-sales/sp_orders_report",
+        "destination": {
+          "tablename": "sp_orders_report_v14"
+        }
+      }
+    },
+    {
+      "attributes": {
+        "path": "selling-partner/orders/sp_orders_pii_master",
+        "destination": {
+          "tablename": "sp_orders_pii_master"
+        }
+      }
+    }
+  ]
+}

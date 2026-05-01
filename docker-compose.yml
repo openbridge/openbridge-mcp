@@ -1,5 +1,35 @@
 
 services:
+  caddy:
+    # TLS terminator + reverse proxy. Caddy provisions a Let's Encrypt
+    # certificate for ${MCP_DOMAIN} on first start (HTTP-01 challenge on
+    # port 80) and auto-renews. The cert + ACME account state live on a
+    # named volume so they survive container recreate — without it
+    # you'd hit Let's Encrypt's rate limits on every redeploy.
+    #
+    # Public ingress points: 80 (ACME challenge + HTTPS redirect) and
+    # 443 (the actual MCP traffic). The openbridge-mcp service no
+    # longer publishes a port to the host.
+    image: caddy:2-alpine
+    depends_on:
+      openbridge-mcp:
+        condition: service_started
+    environment:
+      MCP_DOMAIN: ${MCP_DOMAIN:?set MCP_DOMAIN in .env to your public hostname}
+      MCP_PORT: ${MCP_PORT:-8000}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env for Let's Encrypt notifications}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
   redis:
     # Redis-compatible task queue + storage backend for FastMCP background
     # tasks (via Docket: https://gofastmcp.com/servers/tasks). User chose
@@ -63,11 +93,12 @@ services:
       # Upstream client_id forwarded to /auth/oauth/initialize. Leave empty
       # unless instructed otherwise by Openbridge support.
       # OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID: ${OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID:-}
-    ports:
-      # `main.py` binds to MCP_PORT inside the container, so both sides of
-      # the mapping follow the same env var. Dockerfile EXPOSE 8000 is
-      # purely informational and does not constrain the runtime bind port.
-      - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
+    expose:
+      # Internal-only — the Caddy sidecar reverse-proxies traffic over
+      # the compose network. NO `ports:` block here on purpose: openbridge-mcp
+      # MUST NOT be reachable from the host or the public internet. All
+      # external ingress goes through Caddy on 443.
+      - "${MCP_PORT:-8000}"
     volumes:
       - type: bind
         source: .env
@@ -78,3 +109,10 @@ services:
 volumes:
   redis-data:
     # Persists Redis AOF file across container recreate / image upgrade.
+  caddy-data:
+    # Caddy's ACME account key, issued certificates, and OCSP staples.
+    # Losing this volume means re-issuing the certificate, which counts
+    # against Let's Encrypt's per-domain rate limits — keep it.
+  caddy-config:
+    # Caddy's adapted runtime config. Less critical than caddy-data but
+    # required for clean reloads.

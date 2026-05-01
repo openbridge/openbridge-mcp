@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests
+from pydantic import ValidationError
 
 from src.server.tools import jobs
 
@@ -101,9 +102,7 @@ class TestCreateJob:
             stage_ids=[1],
         )
 
-        assert len(result) == 1
-        assert "errors" in result[0]
-        assert "Connection refused" in result[0]["errors"]
+        assert result["error_kind"] == "sp_api_client"
 
     def test_handles_request_exception_with_response_text(self, monkeypatch, mock_auth_headers, mock_history_api_url):
         """When response exists but raises on status check, uses response text."""
@@ -126,9 +125,7 @@ class TestCreateJob:
             stage_ids=[1],
         )
 
-        assert len(result) == 1
-        assert "errors" in result[0]
-        assert "Bad request" in result[0]["errors"]
+        assert result["error_kind"] == "sp_api_client"
 
     def test_creates_jobs_for_multiple_stage_ids(self, monkeypatch, mock_auth_headers, mock_history_api_url):
         """When multiple stage_ids provided, creates job for each."""
@@ -199,7 +196,7 @@ class TestGetJobs:
 
         result = jobs.get_jobs(subscription_id=123)
 
-        assert result == []
+        assert result["error_kind"] == "sp_api_client"
 
     def test_get_job_by_id_returns_job_on_success(self, monkeypatch, mock_auth_headers):
         monkeypatch.setattr("src.server.tools.jobs.JOBS_API_BASE_URL", "https://jobs.api.test")
@@ -228,7 +225,7 @@ class TestGetJobs:
 
         result = jobs.get_job_by_id(555)
 
-        assert result is None
+        assert result["error_kind"] == "mcp_input_validation"
 
     def test_get_history_by_id_returns_data_on_success(self, monkeypatch, mock_auth_headers):
         monkeypatch.setattr("src.server.tools.jobs.HISTORY_API_BASE_URL", "https://history.api.test")
@@ -325,3 +322,8 @@ class TestJobsUrlDefault:
             f"URL contains duplicated '/jobs/jobs/' segment: {url!r}"
         )
         assert url.endswith("/jobs/555")
+
+
+def test_get_jobs_rejects_string_subscription_id():
+    with pytest.raises(ValidationError):
+        jobs.get_jobs(subscription_id="123")

@@ -3,7 +3,9 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastmcp.server.context import Context
+from pydantic import ConfigDict, StrictInt, validate_call
 
+from src.utils.envelope import make_error, not_found
 from src.utils.logging import get_logger
 from .base import get_api_timeout, get_auth_headers, safe_pagination_url
 
@@ -92,15 +94,16 @@ def get_subscriptions(
     logger.debug("Retrieved %d subscriptions", len(subscriptions))
     return subscriptions
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def get_subscription_by_id(
-    subscription_id: str,
+    subscription_id: StrictInt,
     ctx: Optional[Context] = None,
-) -> Optional[Dict[Any, Any]]:
+) -> Optional[Dict[Any, Any]] | Dict[str, Any]:
     """
     Retrieve a specific subscription by its ID.
     This function retrieves the subscription associated with the given ID.
     Args:
-        subscription_id (str): The ID of the subscription to retrieve.
+        subscription_id (int): The ID of the subscription to retrieve.
     Returns:
         Optional[Dict[Any, Any]]: The subscription represented as a dictionary in a format following JSON:API spec, or None if not found.
     """
@@ -113,21 +116,47 @@ def get_subscription_by_id(
         )
     except requests.RequestException as exc:
         logger.warning("Subscription %s request failed: %s", subscription_id, exc)
-        return None
+        return make_error(
+            tool="get_subscription_by_id",
+            error_kind="sp_api_client",
+            summary=f"Subscription {subscription_id} lookup failed",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "subscription_id",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+        )
     if response.status_code != 200:
         logger.error(f"Failed to retrieve subscription {subscription_id}: {response.status_code} - {response.text}")
-        return None
+        return not_found(
+            tool="get_subscription_by_id",
+            resource_type="subscription",
+            resource_id=subscription_id,
+            error_code="SUBSCRIPTION_NOT_FOUND",
+        )
     try:
         payload = response.json()
     except ValueError:
         logger.warning("Subscription %s returned non-JSON body", subscription_id)
-        return None
+        return not_found(
+            tool="get_subscription_by_id",
+            resource_type="subscription",
+            resource_id=subscription_id,
+            error_code="SUBSCRIPTION_NOT_FOUND",
+        )
     subscription = payload.get("data") if isinstance(payload, dict) else None
     if subscription:
         logger.debug(f"Retrieved subscription {subscription_id}")
         return subscription
     logger.warning(f"Subscription {subscription_id} not found in response")
-    return None
+    return not_found(
+        tool="get_subscription_by_id",
+        resource_type="subscription",
+        resource_id=subscription_id,
+        error_code="SUBSCRIPTION_NOT_FOUND",
+    )
 
 
 def create_subscription(
@@ -166,8 +195,9 @@ def create_subscription(
     return body.get("data") if isinstance(body, dict) else None
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def update_subscription(
-    subscription_id: str,
+    subscription_id: StrictInt,
     attributes: Dict[str, Any],
     ctx: Optional[Context] = None,
 ) -> Optional[Dict[Any, Any]]:
@@ -175,7 +205,7 @@ def update_subscription(
     Update an existing subscription.
 
     Args:
-        subscription_id (str): Subscription ID to update.
+        subscription_id (int): Subscription ID to update.
         attributes (Dict[str, Any]): JSON:API attributes patch payload.
 
     Returns:
@@ -185,7 +215,7 @@ def update_subscription(
     payload = {
         "data": {
             "type": "Subscription",
-            "id": subscription_id,
+            "id": str(subscription_id),
             "attributes": attributes,
         }
     }
@@ -215,15 +245,16 @@ def update_subscription(
     return body.get("data") if isinstance(body, dict) else None
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def cancel_subscription(
-    subscription_id: str,
+    subscription_id: StrictInt,
     ctx: Optional[Context] = None,
 ) -> Optional[Dict[Any, Any]]:
     """
     Cancel a subscription by setting its status to cancelled.
 
     Args:
-        subscription_id (str): Subscription ID to cancel.
+        subscription_id (int): Subscription ID to cancel.
 
     Returns:
         Optional[Dict[Any, Any]]: Updated subscription data when successful, otherwise None.

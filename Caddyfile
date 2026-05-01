@@ -1,0 +1,51 @@
+# Caddyfile — TLS termination for openbridge-mcp.
+#
+# Caddy reads `MCP_DOMAIN` from the compose environment and provisions a
+# Let's Encrypt certificate for it on first request. Renewal is automatic
+# (Caddy schedules its own ACME refreshes well before expiry).
+#
+# Pre-flight requirements (set up BEFORE first `docker compose up`):
+#   1. DNS A record for ${MCP_DOMAIN} pointing at the public IP of this
+#      EC2 instance. Caddy's HTTP-01 challenge needs the domain to
+#      resolve from the public internet.
+#   2. EC2 Security Group inbound rules:
+#        - TCP 80   from 0.0.0.0/0   (ACME HTTP-01 challenge + redirect)
+#        - TCP 443  from your client CIDR (or 0.0.0.0/0 for public MCP)
+#      Port 8000 NO LONGER needs to be open — Caddy is the only ingress.
+#
+# `email` lets Let's Encrypt notify you about expiry / certificate
+# issues. Set ACME_EMAIL in `.env`.
+{
+    email {$ACME_EMAIL}
+}
+
+{$MCP_DOMAIN} {
+    # Reverse-proxy everything to the FastMCP container over the
+    # compose-internal network. `openbridge-mcp` is the service name,
+    # 8000 is the container's internal port (FastMCP binds to MCP_PORT
+    # inside the container; the SG rule for 8000 is no longer needed).
+    reverse_proxy openbridge-mcp:{$MCP_PORT:8000} {
+        # FastMCP's HTTP transport supports streamable responses. Keep
+        # the connection open for SSE / chunked responses; the default
+        # is fine, but be explicit to make it obvious to operators.
+        flush_interval -1
+    }
+
+    # Standard hardening headers. Caddy already terminates TLS with a
+    # modern cipher suite; HSTS keeps clients from being downgraded to
+    # plain HTTP after the first hit. The 31536000 value is one year.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        # Caddy adds its own Server header by default; clear it so we
+        # don't advertise the proxy version to scanners.
+        -Server
+    }
+
+    # Caddy logs to stdout in JSON by default; docker compose captures
+    # them. No file paths needed.
+    log {
+        output stdout
+    }
+}

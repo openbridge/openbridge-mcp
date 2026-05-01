@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests as _requests
+from pydantic import ValidationError
 
 from src.server.tools import subscriptions
 
@@ -285,19 +286,19 @@ class TestSubscriptionMutations:
 
         monkeypatch.setattr("src.server.tools.subscriptions.requests.patch", fake_patch)
 
-        result = subscriptions.update_subscription("123", {"status": "active"})
+        result = subscriptions.update_subscription(123, {"status": "active"})
 
         assert result["id"] == "123"
 
     def test_cancel_subscription_calls_update(self, monkeypatch):
         def fake_update(subscription_id, attributes, ctx=None):
-            assert subscription_id == "123"
+            assert subscription_id == 123
             assert attributes == {"status": "cancelled"}
             return {"id": "123", "attributes": {"status": "cancelled"}}
 
         monkeypatch.setattr(subscriptions, "update_subscription", fake_update)
 
-        result = subscriptions.cancel_subscription("123")
+        result = subscriptions.cancel_subscription(123)
 
         assert result["attributes"]["status"] == "cancelled"
 
@@ -383,14 +384,16 @@ class TestGetSubscriptionByIdErrorPaths:
             return SimpleNamespace(status_code=404, text="not found")
         monkeypatch.setattr("src.server.tools.subscriptions.requests.get", fake_get)
 
-        assert subscriptions.get_subscription_by_id("999") is None
+        result = subscriptions.get_subscription_by_id(999)
+        assert result["error_kind"] == "mcp_input_validation"
 
     def test_request_exception_returns_none(self, monkeypatch, mock_auth_headers, mock_subscriptions_api):
         def raising_get(*args, **kwargs):
             raise _requests.Timeout("slow")
         monkeypatch.setattr("src.server.tools.subscriptions.requests.get", raising_get)
 
-        assert subscriptions.get_subscription_by_id("999") is None
+        result = subscriptions.get_subscription_by_id(999)
+        assert result["error_kind"] == "sp_api_client"
 
     def test_non_json_returns_none(self, monkeypatch, mock_auth_headers, mock_subscriptions_api):
         def fake_get(url, headers=None, timeout=None):
@@ -401,14 +404,16 @@ class TestGetSubscriptionByIdErrorPaths:
             )
         monkeypatch.setattr("src.server.tools.subscriptions.requests.get", fake_get)
 
-        assert subscriptions.get_subscription_by_id("999") is None
+        result = subscriptions.get_subscription_by_id(999)
+        assert result["error_kind"] == "mcp_input_validation"
 
     def test_missing_data_key_returns_none(self, monkeypatch, mock_auth_headers, mock_subscriptions_api):
         def fake_get(url, headers=None, timeout=None):
             return SimpleNamespace(status_code=200, text="{}", json=lambda: {})
         monkeypatch.setattr("src.server.tools.subscriptions.requests.get", fake_get)
 
-        assert subscriptions.get_subscription_by_id("999") is None
+        result = subscriptions.get_subscription_by_id(999)
+        assert result["error_kind"] == "mcp_input_validation"
 
 
 class TestCreateUpdateSubscriptionErrorPaths:
@@ -435,7 +440,7 @@ class TestCreateUpdateSubscriptionErrorPaths:
             raise _requests.ConnectionError("down")
         monkeypatch.setattr("src.server.tools.subscriptions.requests.patch", raising_patch)
 
-        assert subscriptions.update_subscription("1", {"status": "cancelled"}) is None
+        assert subscriptions.update_subscription(1, {"status": "cancelled"}) is None
 
     def test_update_non_json_returns_none(self, monkeypatch, mock_auth_headers, mock_subscriptions_api):
         def fake_patch(*args, **kwargs):
@@ -446,7 +451,12 @@ class TestCreateUpdateSubscriptionErrorPaths:
             )
         monkeypatch.setattr("src.server.tools.subscriptions.requests.patch", fake_patch)
 
-        assert subscriptions.update_subscription("1", {}) is None
+        assert subscriptions.update_subscription(1, {}) is None
+
+
+def test_update_subscription_rejects_string_id():
+    with pytest.raises(ValidationError):
+        subscriptions.update_subscription("1", {"status": "active"})
 
 
 class TestGetStorageSubscriptionsBestEffort:

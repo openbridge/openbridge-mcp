@@ -114,6 +114,14 @@ Phase 3 status: shipped on both servers, both paths.
 
 Both implementations honor the same emission contract: only fields parseable from upstream headers are emitted; absent headers result in absent keys, not synthetic ``None`` values.
 
+Openbridge MCP status: this repository has adopted v1 envelope shape and `_envelope_version`, but does not currently emit `_meta.rate_limit` or `_meta.retry_after_seconds` on all upstream paths. Treat those `_meta` fields as optional/partial for openbridge-mcp until explicitly listed as shipped in this file.
+
+## Type conventions
+
+- Numeric identifiers in tool signatures are `int` and validated as strict integers.
+- Do not pass numeric IDs as strings (for example `"123"`). Use `123`.
+- Common fields this applies to: subscription IDs, job IDs, history IDs, remote identity IDs, product IDs, and remote identity type IDs.
+
 ### `_meta.retry_after_seconds` (v1, partial — shipped on SP error path)
 
 Number of seconds to wait before retrying. Emitted on `rate_limited` errors and on other 4xx/5xx errors that include a `Retry-After` header.
@@ -171,6 +179,89 @@ When a release reclassifies an error from one bucket to another, the envelope in
 - **Release N+1** — drops `legacy_error_kind`. Consumers must have migrated.
 
 CHANGELOGs in each server document the cutover date.
+
+## Receiving envelopes (client recovery patterns)
+
+How an envelope reaches the calling code depends on **where the caller sits**. Sandboxed Code Mode callers — the primary client surface — see envelopes as plain return values. Direct MCP-transport callers see them as `ToolError` raises (a wire-protocol constraint, not a server choice). The server **guarantees the envelope shape on both surfaces** so a single `error_kind` branching block works regardless of arrival path.
+
+### Sandbox callers (primary surface) — always returned as a value
+
+Inside Code Mode (`CODE_MODE=true`, the default), `call_tool` is the function FastMCP injects into the sandboxed namespace. Openbridge wraps that shim with `_EnvelopeUnwrappingCodeMode` (`src/server/code_mode.py`), which converts any `ToolError` whose message is a v1 envelope into a returned dict. The documented recovery pattern works as written:
+
+```python
+err = await call_tool("get_jobs", {"subscription_id": 118666, "bogus_param": "x"})
+if isinstance(err, dict) and err.get("_envelope_version") == 1:
+    if err["error_kind"] == "rate_limited":
+        await asyncio.sleep(err.get("_meta", {}).get("retry_after_seconds", 1))
+    elif err["error_kind"] == "mcp_input_validation":
+        # fix the args and retry
+        ...
+```
+
+This works for *every* envelope-shaped failure the sandbox can hit:
+
+- Tool-detected errors (not-found by ID, upstream non-2xx, sanitized internal errors) — built by tool bodies and returned directly.
+- Pydantic input-validation errors — built by `ErrorEnvelopeMiddleware` and unwrapped at the sandbox boundary.
+- `KeyError` / generic exceptions inside tool bodies — same.
+
+Two cases the wrapper deliberately does NOT swallow:
+
+- **Non-envelope `ToolError`** (a `ToolError` whose message isn't valid v1 envelope JSON) propagates as `ToolError`. Sandbox code can `try/except ToolError` to recover from these.
+- **Non-`ToolError` exceptions** (`RuntimeError`, `asyncio.CancelledError`, etc.) propagate unchanged so real Python errors and asyncio cancellation semantics still work.
+
+### Direct MCP-transport callers — raise + JSON-parse
+
+Clients that talk to the MCP server directly over the wire (raw JSON-RPC, FastMCP `Client`, mcp-cli, etc.) — without going through Code Mode — see envelopes as `ToolError` raises. This is a wire-protocol constraint: `ToolResult` has no `isError` flag, so a tool cannot return a structured payload that the MCP protocol renders as an error. The server packs the envelope into `ToolError.message` as JSON and raises:
+
+```python
+import json
+from fastmcp.exceptions import ToolError
+
+try:
+    result = await client.call_tool("not_a_real_tool", {})
+except ToolError as exc:
+    try:
+        env = json.loads(str(exc))
+    except json.JSONDecodeError:
+        # Plain ToolError, no envelope. Treat as opaque error.
+        raise
+    if env.get("_envelope_version") != 1:
+        raise
+    # Now branch on error_kind exactly like a sandbox return value.
+    if env["error_kind"] == "tool_not_found":
+        ...
+    elif env["error_kind"] == "mcp_input_validation":
+        ...
+```
+
+### Server invariants (both surfaces)
+
+Regardless of arrival path, the server guarantees:
+
+- The envelope is valid v1 (passes `schemas/error-envelope.schema.json`).
+- The same `error_kind` taxonomy is used — recovery code can branch on `error_kind` without knowing which surface produced the envelope.
+- Inside the sandbox, the recovery pattern is a single `if isinstance(err, dict) and err.get("error_kind"): ...` — no try/except needed for envelope-shaped errors.
+- On the direct transport, a single defensive `except ToolError` + `json.loads` is the maximal recovery cost.
+
+### Single-handler shortcut for direct-transport callers
+
+```python
+async def call_with_envelope(client, tool, args):
+    """Return (result, envelope) — exactly one is non-None."""
+    try:
+        result = await client.call_tool(tool, args)
+    except ToolError as exc:
+        try:
+            env = json.loads(str(exc))
+        except json.JSONDecodeError:
+            raise
+        if env.get("_envelope_version") == 1:
+            return None, env
+        raise
+    if isinstance(result, dict) and result.get("_envelope_version") == 1:
+        return None, result
+    return result, None
+```
 
 ## Hint categories (v1)
 

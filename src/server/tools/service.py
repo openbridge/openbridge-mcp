@@ -7,6 +7,14 @@ from typing import Any, Dict, List, Optional
 import requests
 from fastmcp.server.context import Context
 
+from src.utils.table_resolver import (
+    find_matching_rule,
+    levenshtein_similarity,
+    normalize_lookup_token,
+    parse_rule_item,
+    rank_suggestions,
+)
+from src.utils.envelope import auth_error, make_error, not_found
 from src.utils.logging import get_logger
 from .base import get_api_timeout, get_auth_headers
 from .remote_identity import get_remote_identity_by_id
@@ -33,6 +41,9 @@ MUTATING_KEYWORDS = (
 )
 
 LIMIT_PATTERN = re.compile(r"limit\s+\d", re.IGNORECASE)
+TRACEBACK_PATTERN = re.compile(r"Traceback \(most recent call last\):", re.IGNORECASE)
+VAR_TASK_PATH_PATTERN = re.compile(r"/var/task/[\w/\.]+\.py")
+FILE_REF_PATTERN = re.compile(r'File "[^"]+"')
 
 
 def _safe_json(response: requests.Response) -> Optional[Dict[str, Any]]:
@@ -44,6 +55,141 @@ def _safe_json(response: requests.Response) -> Optional[Dict[str, Any]]:
     if isinstance(payload, dict):
         return payload
     return None
+
+
+def _search_rules_api(
+    *,
+    query: str,
+    headers: Dict[str, str],
+    tool: str,
+) -> tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    """Query the rules API and return either data rows or an envelope error."""
+    try:
+        response = requests.get(
+            f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search",
+            params={"path__icontains": query, "latest": "true"},
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Rules API request failed for query=%s: %s", query, exc)
+        return None, make_error(
+            tool=tool,
+            error_kind="sp_api_client",
+            summary=f"Rules API request failed for query {query}",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "query",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+        )
+
+    body_preview = response.text[:500] if response.text else "<empty body>"
+    if response.status_code != 200:
+        logger.warning(
+            "Rules API failure for query=%s status=%d body_preview=%s",
+            query,
+            response.status_code,
+            body_preview,
+        )
+        return None, make_error(
+            tool=tool,
+            error_kind="sp_api_http",
+            summary=f"Rules API failed for query {query}",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=response.status_code >= 500,
+            details=[{
+                "path": "query",
+                "issue": "Rules API returned a non-200 status",
+                "received_type": "HTTPStatusError",
+                "status": response.status_code,
+            }],
+        )
+
+    payload = _safe_json(response)
+    if payload is None:
+        logger.warning(
+            "Rules API returned non-JSON payload for query=%s body_preview=%s",
+            query,
+            body_preview,
+        )
+        return None, make_error(
+            tool=tool,
+            error_kind="sp_api_client",
+            summary=f"Rules API returned non-JSON payload for query {query}",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=False,
+            details=[{
+                "path": "query",
+                "issue": "Response body was not valid JSON",
+                "received_type": "str",
+            }],
+        )
+
+    return payload.get("data", []), None
+
+
+def _table_not_found_envelope(
+    *,
+    table_name: str,
+    suggestions: List[Dict[str, Any]],
+    tool: str = "get_table_schema",
+) -> Dict[str, Any]:
+    hint_lines = [
+        "Use get_suggested_table_names() with a broader query to discover valid table names.",
+        "Use list_product_tables() for a product to inspect available payload-backed and rules-only names.",
+    ]
+    if suggestions:
+        did_you_mean = ", ".join(item["lookup_key"] for item in suggestions)
+        hint_lines.insert(0, f"Did you mean: {did_you_mean}?")
+
+    return make_error(
+        tool=tool,
+        error_kind="mcp_input_validation",
+        summary=f"Table {table_name} not found",
+        error_code="TABLE_NOT_FOUND",
+        retryable=False,
+        details=[{
+            "path": "table_name",
+            "issue": "No matching rules were found",
+            "received_type": "str",
+        }],
+        hints=hint_lines,
+        examples=[item["lookup_key"] for item in suggestions] if suggestions else ["sp_orders_report"],
+    )
+
+
+def _is_error_envelope(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("_envelope_version") == 1 and "error_kind" in value
+
+
+def _contains_traceback_leak(value: Any) -> bool:
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, default=str)
+        except Exception:  # pragma: no cover - defensive
+            text = str(value)
+    return bool(
+        TRACEBACK_PATTERN.search(text)
+        or VAR_TASK_PATH_PATTERN.search(text)
+        or FILE_REF_PATTERN.search(text)
+    )
+
+
+def _missing_upstream_credential_id(payload: Dict[str, Any]) -> bool:
+    ritam_data = payload.get("ritam_data")
+    if isinstance(ritam_data, dict) and not ritam_data.get("id"):
+        return True
+    data = payload.get("data")
+    if isinstance(data, dict):
+        nested = data.get("ritam_data")
+        if isinstance(nested, dict) and not nested.get("id"):
+            return True
+    return False
 
 
 def _find_mutating_keywords(query: str) -> List[str]:
@@ -233,11 +379,35 @@ async def execute_query(
                 "Query validation failed; denying execution. decision=%s",
                 validation["decision"],
             )
-            return [{"error": "Query validation failed", "validation": validation}]
+            return make_error(
+                tool="execute_query",
+                error_kind="mcp_input_validation",
+                summary="Query validation failed",
+                error_code="INPUT_VALIDATION_FAILED",
+                retryable=False,
+                details=[{
+                    "path": "query",
+                    "issue": "Query did not satisfy read-only validation safeguards",
+                    "received_type": "str",
+                }],
+                meta={"validation": validation},
+            )
     except ValueError as ve:
         # Fail-closed: do not execute query if validation cannot be performed
         logger.error("Validation error: %s; denying execution", str(ve))
-        return [{"error": f"Query validation unavailable: {ve}", "validation": "unavailable"}]
+        return make_error(
+            tool="execute_query",
+            error_kind="internal_error",
+            summary=f"Query validation unavailable: {ve}",
+            error_code="INTERNAL_ERROR",
+            retryable=False,
+            details=[{
+                "path": "query",
+                "issue": "Validation pre-check failed before execution",
+                "received_type": "str",
+            }],
+            meta={"validation": "unavailable"},
+        )
 
     headers = get_auth_headers(ctx)
     payload = {
@@ -262,23 +432,35 @@ async def execute_query(
         )
     except requests.RequestException as exc:
         logger.warning("Execute query request failed: %s", exc)
-        return [{
-            "error": "Query execution failed",
-            "status": None,
-            "details": str(exc),
-            "validation": validation,
-        }]
+        return make_error(
+            tool="execute_query",
+            error_kind="sp_api_client",
+            summary="Query execution failed",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "query",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+            meta={"status": None, "validation": validation},
+        )
     if response.status_code == 200:
         response_payload = _safe_json(response)
         if response_payload is None:
-            return [
-                {
-                    "error": "Failed to parse query response",
-                    "status": 200,
-                    "details": "Response body was not valid JSON",
-                    "validation": validation,
-                }
-            ]
+            return make_error(
+                tool="execute_query",
+                error_kind="sp_api_client",
+                summary="Failed to parse query response",
+                error_code="TOOL_EXECUTION_FAILED",
+                retryable=True,
+                details=[{
+                    "path": "",
+                    "issue": "Response body was not valid JSON",
+                    "received_type": "str",
+                }],
+                meta={"status": 200, "validation": validation},
+            )
         data = response_payload.get("data", [])
         return data
 
@@ -287,14 +469,20 @@ async def execute_query(
         response.status_code,
         response.text,
     )
-    return [
-        {
-            "error": "Failed to execute query",
+    return make_error(
+        tool="execute_query",
+        error_kind="sp_api_http",
+        summary="Failed to execute query",
+        error_code="TOOL_EXECUTION_FAILED",
+        retryable=response.status_code >= 500,
+        details=[{
+            "path": "",
+            "issue": "Query API returned a non-200 status",
+            "received_type": "HTTPStatusError",
             "status": response.status_code,
-            "details": response.text,
-            "validation": validation,
-        }
-    ]
+        }],
+        meta={"status": response.status_code, "validation": validation},
+    )
 
 def get_amazon_api_access_token(
     remote_identity_id: int,
@@ -324,12 +512,36 @@ def get_amazon_api_access_token(
             remote_identity_id,
             exc,
         )
-        return {
-            "error": "Amazon API access token request failed",
-            "status": None,
-            "details": str(exc),
-        }
+        return make_error(
+            tool="get_amazon_api_access_token",
+            error_kind="sp_api_client",
+            summary="Amazon API access token request failed",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+            meta={"status": None},
+        )
     response_payload = _safe_json(response)
+    if isinstance(response_payload, dict) and _missing_upstream_credential_id(response_payload):
+        logger.warning(
+            "Remote identity %s is missing upstream credential record id. payload=%s",
+            remote_identity_id,
+            response_payload,
+        )
+        return auth_error(
+            tool="get_amazon_api_access_token",
+            summary="Remote identity is missing required upstream credential record",
+            details=[{
+                "path": "ritam_data.id",
+                "issue": "Required upstream credential id is missing",
+                "received_type": "missing",
+            }],
+        )
+
     if response.status_code == 200 and response_payload is not None:
         data = response_payload.get("data") if isinstance(response_payload, dict) else None
         data = data if isinstance(data, dict) else {}
@@ -343,11 +555,15 @@ def get_amazon_api_access_token(
                 "Amazon API access token missing from response for remote identity %s",
                 remote_identity_id,
             )
-            return {
-                "error": "Amazon API access token missing from response",
-                "status": 200,
-                "details": response_payload,
-            }
+            return auth_error(
+                tool="get_amazon_api_access_token",
+                summary="Amazon API access token missing from response",
+                details=[{
+                    "path": "data.access_token",
+                    "issue": "Upstream response did not include a non-empty access token",
+                    "received_type": type(access_token).__name__,
+                }],
+            )
         logger.debug(
             "Retrieved Amazon API access token for remote identity %s (length: %d)",
             remote_identity_id,
@@ -361,20 +577,49 @@ def get_amazon_api_access_token(
     else:
         details = response_payload
     logger.warning(
+        "Amazon access token upstream error for remote identity %s status=%s payload=%s",
+        remote_identity_id,
+        response.status_code,
+        details,
+    )
+    if _contains_traceback_leak(details):
+        return make_error(
+            tool="get_amazon_api_access_token",
+            error_kind="internal_error",
+            summary="Failed to retrieve Amazon API access token",
+            error_code="INTERNAL_ERROR",
+            retryable=response.status_code >= 500,
+            details=[{
+                "path": "",
+                "issue": "Upstream error details were sanitized",
+                "received_type": type(details).__name__,
+            }],
+            meta={"sanitized": True, "upstream_status": response.status_code},
+        )
+    logger.warning(
         "Failed to retrieve Amazon API access token for remote identity %s: %s",
         remote_identity_id,
         response.status_code,
     )
-    return {
-        "error": "Failed to retrieve Amazon API access token",
-        "status": response.status_code,
-        "details": details,
-    }
+    return make_error(
+        tool="get_amazon_api_access_token",
+        error_kind="sp_api_http",
+        summary="Failed to retrieve Amazon API access token",
+        error_code="TOOL_EXECUTION_FAILED",
+        retryable=response.status_code >= 500,
+        details=[{
+            "path": "",
+            "issue": "Token API returned a non-200 status",
+            "received_type": "HTTPStatusError",
+            "status": response.status_code,
+        }],
+        meta={"status": response.status_code},
+    )
 
 def get_amazon_advertising_profiles(
     remote_identity_id: int,
     ctx: Optional[Context] = None,
-) -> List[dict]:
+) -> List[dict] | Dict[str, Any]:
     """
     List the Amazon Advertising profiles for a given remote identity ID.
 
@@ -385,18 +630,28 @@ def get_amazon_advertising_profiles(
     """
     # Obtain the remote identity
     remote_identity = get_remote_identity_by_id(remote_identity_id, ctx=ctx)
-    if not remote_identity or ('error' in remote_identity):
+    if not remote_identity or _is_error_envelope(remote_identity):
         logger.warning(f"Remote identity {remote_identity_id} not found. Cannot retrieve advertising profiles.")
-        return []
+        return remote_identity if _is_error_envelope(remote_identity) else not_found(
+            tool="get_amazon_advertising_profiles",
+            resource_type="remote_identity",
+            resource_id=remote_identity_id,
+            error_code="REMOTE_IDENTITY_NOT_FOUND",
+        )
     # Obtain the Amazon Advertising access token. Token helper returns an
     # error dict when the token is missing/null — check explicitly.
     token_info = get_amazon_api_access_token(remote_identity_id, ctx=ctx)
-    if not token_info or 'error' in token_info or not token_info.get('access_token'):
+    if not token_info or _is_error_envelope(token_info) or not token_info.get('access_token'):
         logger.warning(
             "No access token available for remote identity %s. Cannot retrieve advertising profiles.",
             remote_identity_id,
         )
-        return []
+        if _is_error_envelope(token_info):
+            return token_info
+        return auth_error(
+            tool="get_amazon_advertising_profiles",
+            summary="No access token available for remote identity",
+        )
     # Resolve regional base URL; unknown region is a soft failure.
     region = remote_identity.get('region')
     base_url = AMZADV_REGIONAL_BASE_URLS.get(region) if isinstance(region, str) else None
@@ -406,7 +661,18 @@ def get_amazon_advertising_profiles(
             remote_identity_id,
             region,
         )
-        return []
+        return make_error(
+            tool="get_amazon_advertising_profiles",
+            error_kind="mcp_input_validation",
+            summary=f"Remote identity {remote_identity_id} has unsupported region '{region}'",
+            error_code="INPUT_VALIDATION_FAILED",
+            retryable=False,
+            details=[{
+                "path": "remote_identity.region",
+                "issue": "Unsupported Amazon Advertising region",
+                "received_type": type(region).__name__,
+            }],
+        )
     headers = {
         "Authorization": f"Bearer {token_info['access_token']}",
         "Amazon-Advertising-API-ClientId": token_info.get('client_id'),
@@ -423,7 +689,18 @@ def get_amazon_advertising_profiles(
             remote_identity_id,
             exc,
         )
-        return []
+        return make_error(
+            tool="get_amazon_advertising_profiles",
+            error_kind="sp_api_client",
+            summary="Amazon Advertising profiles request failed",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+        )
     if response.status_code == 200:
         try:
             profiles = response.json()
@@ -432,151 +709,176 @@ def get_amazon_advertising_profiles(
                 "Amazon Advertising profiles response was not JSON for remote identity %s",
                 remote_identity_id,
             )
-            return []
+            return make_error(
+                tool="get_amazon_advertising_profiles",
+                error_kind="sp_api_client",
+                summary="Amazon Advertising profiles response was not JSON",
+                error_code="TOOL_EXECUTION_FAILED",
+                retryable=True,
+                details=[{
+                    "path": "",
+                    "issue": "Response body was not valid JSON",
+                    "received_type": "str",
+                }],
+            )
         logger.debug(f"Retrieved Amazon Advertising profiles for remote identity {remote_identity_id}: {profiles}")
         return profiles
     logger.warning(f"Failed to retrieve Amazon Advertising profiles for remote identity {remote_identity_id}: {response.status_code}")
-    return []
+    return make_error(
+        tool="get_amazon_advertising_profiles",
+        error_kind="sp_api_http",
+        summary="Failed to retrieve Amazon Advertising profiles",
+        error_code="TOOL_EXECUTION_FAILED",
+        retryable=response.status_code >= 500,
+        details=[{
+            "path": "",
+            "issue": "Amazon Advertising API returned a non-200 status",
+            "received_type": "HTTPStatusError",
+            "status": response.status_code,
+        }],
+    )
 
 
 def get_suggested_table_names(
     query: str,
     ctx: Optional[Context] = None,
-) -> List[str]:
+) -> Dict[str, Any]:
     """
-    Given a query string, obtain a list of possible table names from the rules API (through the service API).
+    Return structured table-name candidates from the rules API.
 
     Args:
-        query (str): The SQL query to analyze.
+        query (str): Discovery query, usually a table intent or report phrase.
     Returns:
-        List[str]: A list of possible table names found from the query.
+        Dict[str, Any]: On success, ``{"query": ..., "candidates": [...]}``.
+        On no-match/failure, returns a v1 error envelope.
     """
     headers = get_auth_headers(ctx)
-    # Rules API stores hierarchical paths (e.g. "amazon-ads/<table>"), so a
-    # bare search term needs substring matching via path__icontains. The
-    # exact `path=` filter only matches full hierarchical paths.
-    params = {
-        "path__icontains": query,
-        "latest": "true",
-    }
-    try:
-        response = requests.get(
-            f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search",
-            params=params,
-            headers=headers,
-            timeout=get_api_timeout(),
-        )
-    except requests.RequestException as exc:
-        logger.warning("Failed to retrieve suggested table names: %s", exc)
-        return []
-
-    body_preview = response.text[:500] if response.text else "<empty body>"
-    if response.status_code != 200:
-        logger.warning(
-            "Rules API failure for suggested names query=%s status=%d body_preview=%s",
-            query,
-            response.status_code,
-            body_preview,
-        )
-        return []
-
-    response_payload = _safe_json(response)
-    if response_payload is None:
-        logger.warning(
-            "Rules API returned non-JSON payload for suggested names query=%s body_preview=%s",
-            query,
-            body_preview,
-        )
-        return []
-
-    # Extract table names from the response
-    table_names = []
-    for item in response_payload.get("data", []):
-        if item.get("attributes", {}):
-            # Append the table name with '_master' suffix to ensure use of the master view
-            table_names.append(item.get("attributes", {}).get("path").split('/')[-1] + '_master')
-    if table_names:
-        logger.debug(f"Found table names in query '{query}': {table_names}")
-        return table_names
-    logger.info(
-        "Rules API returned 200 with no matches for suggested names query=%s body_preview=%s",
-        query,
-        body_preview,
+    rules, error = _search_rules_api(
+        query=query,
+        headers=headers,
+        tool="get_suggested_table_names",
     )
-    return []
+    if error is not None:
+        return error
+
+    parsed = [row for row in (parse_rule_item(item) for item in (rules or [])) if row is not None]
+    if not parsed:
+        logger.info("No suggested tables found for query=%s", query)
+        return make_error(
+            tool="get_suggested_table_names",
+            error_kind="mcp_input_validation",
+            summary=f"No suggested tables found for query {query}",
+            error_code="TABLE_NOT_FOUND",
+            retryable=False,
+            details=[{
+                "path": "query",
+                "issue": "No matching rules were found",
+                "received_type": "str",
+            }],
+            hints=[
+                "Try a broader query term (for example: 'orders report' instead of a full key).",
+                "Use list_product_tables() for a product to discover payload-backed names.",
+                "Use get_table_schema() directly if you already know the likely table key.",
+            ],
+            examples=["sp_orders_report", "sp_orders_pii_master"],
+        )
+
+    candidates: List[Dict[str, Any]] = []
+    seen = set()
+    for row in sorted(parsed, key=lambda item: item["lookup_key"]):
+        if row["lookup_key"] in seen:
+            continue
+        seen.add(row["lookup_key"])
+        candidates.append({
+            "lookup_key": row["lookup_key"],
+            "aliases": row["aliases"],
+            "destination_table": row.get("destination_table"),
+            "rules_path": row.get("rules_path"),
+            "source": row.get("source", "rules"),
+            "confidence": round(
+                levenshtein_similarity(
+                    normalize_lookup_token(query),
+                    normalize_lookup_token(row["lookup_key"]),
+                ),
+                3,
+            ),
+        })
+
+    return {
+        "query": query,
+        "candidates": candidates,
+    }
 
 
 def get_table_schema(
     table_name: str,
     ctx: Optional[Context] = None,
-) -> Optional[dict]:
+) -> Dict[str, Any]:
     """
-    Get the rules for a given table name from the rules API.
+    Resolve a table alias and return canonical rules metadata.
 
     Args:
-        table_name (str): The name of the table to get rules for.
+        table_name (str): Table key in bare, ``_master``, or ``_vNN`` form.
     Returns:
-        dict: The rules for the table if found, otherwise None.
+        Dict[str, Any]: On success returns canonical table metadata and schema.
+        On not-found/failure returns a v1 error envelope.
     """
     headers = get_auth_headers(ctx)
-    # Remove the '_master' suffix if present to match the rule path
-    if table_name.endswith('_master'):
-        table_name = table_name[:-7]
-    # The Rules API stores paths as "<source>/<table>" (e.g.
-    # "amazon-ads/amzn_ads_sp_advertised_products"). `path=` requires an
-    # exact match, which fails when callers pass a bare table name.
-    # `path__icontains=` (Django-style) does substring matching; the
-    # endswith() tie-break below disambiguates when multiple rules share
-    # a suffix across different sources.
-    url = (
-        f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search"
-        f"?path__icontains={table_name}&latest=true"
+    query = normalize_lookup_token(table_name) or table_name.strip().lower()
+    rules, error = _search_rules_api(
+        query=query,
+        headers=headers,
+        tool="get_table_schema",
     )
-    try:
-        response = requests.get(
-            url,
+    if error is not None:
+        return error
+
+    parsed = [row for row in (parse_rule_item(item) for item in (rules or [])) if row is not None]
+    match = find_matching_rule(table_name, parsed)
+    if match is not None:
+        response = {
+            "lookup_key": match["lookup_key"],
+            "resolved_alias": table_name,
+            "aliases": match["aliases"],
+            "rules_path": match.get("rules_path"),
+            "schema": match["rule"],
+        }
+        destination_table = match.get("destination_table")
+        if destination_table is not None:
+            response["destination_table"] = destination_table
+        return response
+
+    # Fallback lookup terms for typo recovery/suggestions.
+    fallback_terms: List[str] = []
+    stripped_digits = re.sub(r"\d+$", "", query)
+    if stripped_digits and stripped_digits != query:
+        fallback_terms.append(stripped_digits)
+    if "_" in stripped_digits:
+        parent = stripped_digits.rsplit("_", 1)[0]
+        if parent and parent != stripped_digits:
+            fallback_terms.append(parent)
+
+    suggestion_rows = list(parsed)
+    for term in fallback_terms:
+        extra_rules, extra_error = _search_rules_api(
+            query=term,
             headers=headers,
-            timeout=get_api_timeout(),
+            tool="get_table_schema",
         )
-    except requests.RequestException as exc:
-        logger.warning("Rules API request failed for table=%s: %s", table_name, exc)
-        return None
-    body_preview = response.text[:500] if response.text else "<empty body>"
-    if response.status_code == 200:
-        payload = _safe_json(response) or {}
-        rules = payload.get("data", [])
-        if rules:
-            if len(rules) > 1:
-                exact_matches = [
-                    rule for rule in rules
-                    if isinstance(rule.get("attributes"), dict)
-                    and isinstance(rule["attributes"].get("path"), str)
-                    and rule["attributes"]["path"].endswith(table_name)
-                ]
-                if not exact_matches:
-                    # Ambiguous match: refuse to guess. Contract requires
-                    # None so callers cannot silently use the wrong rule.
-                    logger.warning(
-                        "Rules API returned %d matches for table=%s but none ended with the bare name; returning None.",
-                        len(rules),
-                        table_name,
-                    )
-                    return None
-                rules = exact_matches
-            logger.debug(f"Retrieved rules for table {table_name}: {rules[0]}")
-            return rules[0]
-        logger.info(
-            "Rules API returned 200 with no matches for table=%s url=%s body_preview=%s",
-            table_name,
-            url,
-            body_preview,
+        if extra_error is not None:
+            logger.debug("Fallback rules lookup failed for term=%s", term)
+            continue
+        suggestion_rows.extend(
+            row for row in (parse_rule_item(item) for item in (extra_rules or [])) if row is not None
         )
-        return None
-    logger.warning(
-        "Rules API failure for table=%s status=%d url=%s body_preview=%s",
+
+    suggestions = rank_suggestions(
         table_name,
-        response.status_code,
-        url,
-        body_preview,
+        [row["lookup_key"] for row in suggestion_rows],
+        limit=5,
+        min_similarity=0.6,
     )
-    return None
+    return _table_not_found_envelope(
+        table_name=table_name,
+        suggestions=suggestions,
+    )
