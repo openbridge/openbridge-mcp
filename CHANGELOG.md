@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - 2026-05-01
+
+- Fix: `get_suggested_table_names` now normalizes free-form queries before hitting the rules API substring filter. Live repro: `query="SP Campaign"` (mixed case + space) substring-missed every catalog entry and fell through to the no-match envelope, even though `"sp_campaign"` would have hit `amzn_ads_sp_campaigns` cleanly. Normalization rules: lowercase, collapse non-alphanumerics to a single underscore, strip leading/trailing underscores. The caller's original `query` is echoed back unchanged in the response.
+- Fix: drop the hardcoded SP-domain `examples` fallback (`["sp_orders_report", "sp_orders_pii_master"]`) from no-match envelopes in both `get_suggested_table_names` and `get_table_schema`. The fallback leaked SP-specific suggestions into envelopes returned for unrelated queries (Ads, social, marketing-stream). When the resolver finds zero candidates the `examples` array is now `[]` — the honest answer.
+- Fix: rewrite the no-match `hints` text to be product-neutral. The old hint "Try a broader query term (for example: 'orders report' instead of a full key)" leaked the same SP-domain bias.
+
 ## 0.3.0 - 2026-05-01
 
 - Breaking: table discovery responses are now normalized objects across `get_suggested_table_names`, `list_product_tables`, and `get_table_schema`. The old list-only discovery shape has been removed.

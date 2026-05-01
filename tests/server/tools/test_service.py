@@ -117,12 +117,15 @@ def test_execute_query_short_circuits_on_failed_validation(monkeypatch):
 
 
 def test_get_suggested_table_names_returns_candidates_shape(monkeypatch):
+    """Free-form query is normalized (hyphens → underscores, lowercase)
+    before being sent to the rules API substring filter."""
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
     def fake_get(url, params=None, headers=None, timeout=None):
         assert url == "https://service.test/service/rules/prod/v1/rules/search"
-        assert params == {"path__icontains": "path-query", "latest": "true"}
+        # Caller passed "path-query"; normalization should send "path_query".
+        assert params == {"path__icontains": "path_query", "latest": "true"}
         return SimpleNamespace(
             status_code=200,
             text="{}",
@@ -137,9 +140,41 @@ def test_get_suggested_table_names_returns_candidates_shape(monkeypatch):
     monkeypatch.setattr(service.requests, "get", fake_get)
 
     result = service.get_suggested_table_names("path-query")
+    # Echo the caller's original query unchanged so they can correlate
+    # the request to the response without unwrapping our normalization.
     assert result["query"] == "path-query"
     assert [item["lookup_key"] for item in result["candidates"]] == ["order", "product"]
     assert "product_master" in result["candidates"][1]["aliases"]
+
+
+def test_get_suggested_table_names_normalizes_mixed_case_with_spaces(monkeypatch):
+    """Repro for the live regression: 'SP Campaign' must reach the rules
+    API as 'sp_campaign' so substring matching against
+    'amazon-ads/amzn_ads_sp_campaigns' actually hits."""
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    captured = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["params"] = params
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {"attributes": {"path": "amazon-ads/amzn_ads_sp_campaigns"}},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_suggested_table_names("SP Campaign")
+
+    assert captured["params"] == {"path__icontains": "sp_campaign", "latest": "true"}
+    assert result["query"] == "SP Campaign"
+    assert result["candidates"][0]["lookup_key"] == "amzn_ads_sp_campaigns"
 
 
 def test_get_suggested_table_names_returns_envelope_on_non_json(monkeypatch):
@@ -886,7 +921,14 @@ def test_get_suggested_table_names_no_match_returns_envelope(monkeypatch):
     assert result["error_kind"] == "mcp_input_validation"
     assert result["error_code"] == "TABLE_NOT_FOUND"
     assert result["hints"]
-    assert result["examples"]
+    # Examples is intentionally empty when the resolver finds nothing —
+    # we no longer ship hardcoded SP-domain fallbacks (sp_orders_report,
+    # sp_orders_pii_master) that misled callers querying Ads/social/etc.
+    assert result["examples"] == []
+    # And the hints must not leak SP-specific guidance like
+    # "(for example: 'orders report' instead of a full key)".
+    joined_hints = " ".join(result["hints"]).lower()
+    assert "orders report" not in joined_hints, "hint text leaks SP-domain example"
 
 
 def test_get_table_schema_alias_variants_resolve_same_canonical(monkeypatch):

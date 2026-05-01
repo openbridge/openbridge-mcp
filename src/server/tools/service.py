@@ -57,6 +57,36 @@ def _safe_json(response: requests.Response) -> Optional[Dict[str, Any]]:
     return None
 
 
+_QUERY_NORMALIZE_NON_TOKEN = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_discovery_query(query: str) -> str:
+    """Coerce a free-form table query into the rules-API substring shape.
+
+    Why this is here: ``_search_rules_api`` calls
+    ``/service/rules/prod/v1/rules/search?path__icontains=<query>``, which
+    is a literal substring match against rules paths like
+    ``amazon-ads/amzn_ads_sp_campaigns``. Free-form queries such as
+    ``"SP Campaign"`` (mixed case + space) substring-miss every catalog
+    entry and we fall through to the no-match envelope, even though
+    ``sp_campaign`` would have hit ``amzn_ads_sp_campaigns`` cleanly.
+
+    Normalization rules:
+    - Lowercase
+    - Collapse any run of non-alphanumerics to a single underscore
+    - Strip leading/trailing underscores
+
+    Examples:
+    - ``"SP Campaign"`` → ``"sp_campaign"``
+    - ``"Sponsored Products: Orders"`` → ``"sponsored_products_orders"``
+    - already-normalized values (``"sp_campaigns"``) are returned unchanged.
+    """
+    if not query:
+        return ""
+    collapsed = _QUERY_NORMALIZE_NON_TOKEN.sub("_", query.strip().lower())
+    return collapsed.strip("_")
+
+
 def _search_rules_api(
     *,
     query: str,
@@ -157,7 +187,7 @@ def _table_not_found_envelope(
             "received_type": "str",
         }],
         hints=hint_lines,
-        examples=[item["lookup_key"] for item in suggestions] if suggestions else ["sp_orders_report"],
+        examples=[item["lookup_key"] for item in suggestions] if suggestions else [],
     )
 
 
@@ -753,8 +783,13 @@ def get_suggested_table_names(
         On no-match/failure, returns a v1 error envelope.
     """
     headers = get_auth_headers(ctx)
+    # Normalize free-form input ("SP Campaign", "Sponsored Products:
+    # Orders") to the underscored lowercase shape the rules-API substring
+    # filter expects. Without this, casual queries fall through to the
+    # no-match envelope even when a catalog entry would clearly match.
+    normalized_query = _normalize_discovery_query(query)
     rules, error = _search_rules_api(
-        query=query,
+        query=normalized_query or query,
         headers=headers,
         tool="get_suggested_table_names",
     )
@@ -763,7 +798,11 @@ def get_suggested_table_names(
 
     parsed = [row for row in (parse_rule_item(item) for item in (rules or [])) if row is not None]
     if not parsed:
-        logger.info("No suggested tables found for query=%s", query)
+        logger.info(
+            "No suggested tables found for query=%s (normalized=%s)",
+            query,
+            normalized_query,
+        )
         return make_error(
             tool="get_suggested_table_names",
             error_kind="mcp_input_validation",
@@ -776,11 +815,16 @@ def get_suggested_table_names(
                 "received_type": "str",
             }],
             hints=[
-                "Try a broader query term (for example: 'orders report' instead of a full key).",
-                "Use list_product_tables() for a product to discover payload-backed names.",
-                "Use get_table_schema() directly if you already know the likely table key.",
+                "Try a broader query term (single word, lowercase) — e.g. 'campaign' or 'orders'.",
+                "Use list_product_tables() for a known product_id to discover payload-backed names.",
+                "Use get_table_schema() directly if you already know the canonical lookup_key.",
             ],
-            examples=["sp_orders_report", "sp_orders_pii_master"],
+            # No hardcoded fallback examples — they leaked SP-domain bias
+            # into envelopes for unrelated queries (Ads, social, stream).
+            # When the resolver finds zero candidates it has nothing
+            # query-relevant to suggest; an empty array is the honest
+            # answer.
+            examples=[],
         )
 
     candidates: List[Dict[str, Any]] = []
