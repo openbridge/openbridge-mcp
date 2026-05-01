@@ -22,6 +22,7 @@ from src.auth.authentication import create_auth_middleware, create_openbridge_co
 from src.auth.manager import get_auth_manager  # noqa: E402
 from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy  # noqa: E402
 from src.server.code_mode import create_code_mode_transform, is_code_mode_enabled  # noqa: E402
+from src.server.error_envelope_middleware import ErrorEnvelopeMiddleware  # noqa: E402
 from src.server.sampling import create_sampling_handler  # noqa: E402
 
 
@@ -36,8 +37,8 @@ def _get_service_version() -> str:
         return "unknown"
 
 
-def _log_capability_summary() -> None:
-    capabilities = capabilities_tools.build_capabilities()
+def _log_capability_summary(registered_tool_names: set[str]) -> None:
+    capabilities = capabilities_tools.build_capabilities(registered_tool_names)
     summary = capabilities["summary"]
     runtime = capabilities["runtime"]
     logger.info(
@@ -82,6 +83,13 @@ def _is_async_callable(func: Callable[..., Any]) -> bool:
     while isinstance(target, functools.partial):
         target = target.func
     return inspect.iscoroutinefunction(target)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _async_wrap(sync_func: Callable[..., Any]) -> Callable[..., Any]:
@@ -129,6 +137,7 @@ def create_mcp_server() -> FastMCP:
         oauth = create_oauth_proxy(base_url=base_url)
         logger.info("OAuth Proxy created successfully, initializing FastMCP with OAuthProxy auth")
         mcp = FastMCP(**_MCP_KWARGS, auth=oauth)
+        mcp.add_middleware(ErrorEnvelopeMiddleware())
         mcp.add_middleware(OAuthBridgeMiddleware())
         logger.info("Auth mode: oauth_proxy (FastMCP OAuthProxy + introspection, base_url=%s)", base_url)
     else:
@@ -137,6 +146,7 @@ def create_mcp_server() -> FastMCP:
         auth_manager = get_auth_manager()
         middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
         mcp = FastMCP(**_MCP_KWARGS)
+        mcp.add_middleware(ErrorEnvelopeMiddleware())
         for mw in middleware:
             mcp.add_middleware(mw)
         logger.info("Auth mode: refresh_token (Bearer/exchange middleware)")
@@ -174,9 +184,13 @@ def create_mcp_server() -> FastMCP:
     # Service Tools
     # Query validation tools require an API key for LLM sampling
     has_sampling_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
+    query_execution_enabled = _env_flag("OPENBRIDGE_ENABLE_QUERY_EXECUTION", default=True)
     if has_sampling_key:
         register_tool("validate_query", service_tools.validate_query)
-        register_tool("execute_query", service_tools.execute_query)
+        if query_execution_enabled:
+            register_tool("execute_query", service_tools.execute_query)
+        else:
+            logger.info("Skipping execute_query: OPENBRIDGE_ENABLE_QUERY_EXECUTION is false")
     else:
         logger.info("Skipping SQL query tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
     register_tool("get_amazon_api_access_token", service_tools.get_amazon_api_access_token)
@@ -233,7 +247,7 @@ def create_mcp_server() -> FastMCP:
             "Code mode is the recommended primary entry point — re-enable it (unset CODE_MODE or set CODE_MODE=true) unless you have a specific reason to expose every tool by name."
         )
 
-    _log_capability_summary()
+    _log_capability_summary(registered_tool_names)
     if auth_cfg.auth_mode != "oauth_proxy":
         _warn_if_server_token_fallback_open()
     return mcp

@@ -4,7 +4,9 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastmcp.server.context import Context
+from pydantic import ConfigDict, StrictInt, validate_call
 
+from src.utils.envelope import make_error, not_found
 from src.utils.logging import get_logger
 from .base import get_api_timeout, get_auth_headers
 
@@ -14,21 +16,22 @@ JOBS_API_BASE_URL = os.getenv('JOBS_API_BASE_URL', 'https://service.api.openbrid
 HISTORY_API_BASE_URL = os.getenv("HISTORY_API_BASE_URL", "https://history.api.openbridge.io")
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def get_jobs(
-    subscription_id: int,
+    subscription_id: StrictInt,
     status: Optional[str] = 'active',
-    is_primary: Optional[str] = 'true',
+    is_primary: Optional[bool] = True,
     ctx: Optional[Context] = None,
-) -> List[Dict[Any, Any]]:
+) -> List[Dict[Any, Any]] | Dict[str, Any]:
     """
     Fetches jobs from the Openbridge API.
 
     Args:
         subscription_id (int): The subscription ID to filter jobs. This is required; only jobs associated with this subscription will be returned.
         status (Optional[str]): The status to filter jobs.
-        is_primary (Optional[str]): Whether to filter for primary jobs. 
-            - If 'true', only primary jobs are returned.
-            - If 'false', only one-off/history jobs are returned.
+        is_primary (Optional[bool]): Whether to filter for primary jobs.
+            - If True, only primary jobs are returned.
+            - If False, only one-off/history jobs are returned.
             - If not set, both primary and one-off/history jobs are returned.
 
     Returns:
@@ -42,7 +45,7 @@ def get_jobs(
     if status:
         params['status'] = status
     if is_primary is not None:
-        params['is_primary'] = is_primary.lower()
+        params['is_primary'] = str(is_primary).lower()
 
     try:
         response = requests.get(
@@ -55,13 +58,25 @@ def get_jobs(
         return response.json().get('data', [])
     except requests.RequestException as e:
         logger.error("Error fetching jobs: %s", e)
-        return []
+        return make_error(
+            tool="get_jobs",
+            error_kind="sp_api_client",
+            summary="Error fetching jobs",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "subscription_id",
+                "issue": str(e),
+                "received_type": type(e).__name__,
+            }],
+        )
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def get_job_by_id(
-    job_id: int,
+    job_id: StrictInt,
     ctx: Optional[Context] = None,
-) -> Optional[Dict[Any, Any]]:
+) -> Optional[Dict[Any, Any]] | Dict[str, Any]:
     """
     Fetch a single job by job ID.
 
@@ -81,15 +96,21 @@ def get_job_by_id(
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error("Error fetching job %s: %s", job_id, e)
-        return None
+        return not_found(
+            tool="get_job_by_id",
+            resource_type="job",
+            resource_id=job_id,
+            error_code="JOB_NOT_FOUND",
+        )
 
     return response.json().get("data")
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def get_history_by_id(
-    history_id: int,
+    history_id: StrictInt,
     ctx: Optional[Context] = None,
-) -> Optional[Dict[Any, Any]]:
+) -> Optional[Dict[Any, Any]] | Dict[str, Any]:
     """
     Fetch a history transaction by ID.
 
@@ -109,15 +130,21 @@ def get_history_by_id(
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error("Error fetching history %s: %s", history_id, e)
-        return None
+        return not_found(
+            tool="get_history_by_id",
+            resource_type="history",
+            resource_id=history_id,
+            error_code="HISTORY_NOT_FOUND",
+        )
     return response.json().get("data")
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def update_history_status(
-    history_id: int,
+    history_id: StrictInt,
     status: str,
     ctx: Optional[Context] = None,
-) -> Optional[Dict[Any, Any]]:
+) -> Optional[Dict[Any, Any]] | Dict[str, Any]:
     """
     Update a history transaction status.
 
@@ -146,17 +173,29 @@ def update_history_status(
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error("Error updating history %s: %s", history_id, e)
-        return None
+        return make_error(
+            tool="update_history_status",
+            error_kind="sp_api_client",
+            summary=f"Failed to update history {history_id}",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=True,
+            details=[{
+                "path": "history_id",
+                "issue": str(e),
+                "received_type": type(e).__name__,
+            }],
+        )
     return response.json().get("data")
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def create_job(
-    subscription_id: int,
+    subscription_id: StrictInt,
     date_start: str,
     date_end: str,
-    stage_ids: List[int],
+    stage_ids: List[StrictInt],
     ctx: Optional[Context] = None,
-) -> List[Dict[Any, Any]]:
+) -> List[Dict[Any, Any]] | Dict[str, Any]:
     """
     Create a job for a given subscription.
 
@@ -199,5 +238,16 @@ def create_job(
         except requests.RequestException as e:
             error_detail = response.text if response is not None else str(e)
             logger.error("Error creating one-off job: %s", error_detail)
-            return [{"errors": error_detail}]
+            return make_error(
+                tool="create_job",
+                error_kind="sp_api_client",
+                summary="Error creating one-off job",
+                error_code="TOOL_EXECUTION_FAILED",
+                retryable=True,
+                details=[{
+                    "path": "stage_ids",
+                    "issue": error_detail,
+                    "received_type": type(e).__name__,
+                }],
+            )
     return job_data

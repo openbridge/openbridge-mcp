@@ -95,6 +95,17 @@ def create_oauth_proxy(*, base_url: str) -> OAuthProxy:
         forward_pkce=False,
         token_endpoint_auth_method="client_secret_post",
         fallback_access_token_expiry_seconds=3600,
+        # Skip the local FastMCP consent page (the
+        # `mcp.openbridge.com/consent?txn_id=...` interstitial) and let
+        # Auth0 own consent. Removes one hop from the OAuth redirect
+        # chain and eliminates the orphaned-tab quirk on the local
+        # consent screen specifically. Auth0's own consent screen still
+        # has the same post-Allow redirect dynamics — that's a
+        # FastMCP/OAuth wire-protocol issue, not solvable here. "external"
+        # vs `False` matters: the former skips the screen quietly; the
+        # latter logs a "only use for local development" warning at
+        # boot, which would mislead operators.
+        require_authorization_consent="external",
     )
 
 

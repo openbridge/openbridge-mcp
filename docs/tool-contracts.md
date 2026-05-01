@@ -42,32 +42,30 @@ Runs validated SQL via the Query API. Fail-closed: must not reach the network un
 | Non-200 response | Return `[{"error": "Failed to execute query", "status": <code>, "details": <text>, "validation": <v>}]`. Warn-log. |
 | `requests.post` raises (Timeout/ConnectionError) | Return `[{"error": "Query execution failed", "status": None, "details": <str(exc)>, "validation": <v>}]`. Warn-log. |
 
-### `get_table_schema(table_name, ctx=None) -> Optional[dict]`
+### `get_table_schema(table_name, ctx=None) -> Dict[str, Any]`
 
 Look up a single table's rules via the Rules API.
 
 | Trigger | Behavior |
 |---|---|
-| Input ends with `_master` | Strip suffix before search (caller convenience). |
-| HTTP 200 with `data: []` | Return `None`, info-log with URL + body preview. |
-| HTTP 200 with one match | Return the single rule object. |
-| HTTP 200 with multiple matches, one endswith exact `table_name` | Narrow to endswith-matching rows, return first. |
-| HTTP 200 with multiple matches, none endswith | Return `None`, warn-log (ambiguous match — caller should refine). |
-| HTTP 200 non-JSON | Return `None`, info-log with body preview. |
-| Non-200 | Return `None`, warn-log with status, URL, body preview. |
-| `requests.get` raises | Return `None`, warn-log. |
+| Input is bare / `_master` / `_vNN` | Normalize and resolve aliases to canonical Rules-path leaf. |
+| HTTP 200 with deterministic match | Return normalized object: `{lookup_key, resolved_alias, aliases, rules_path, destination_table?, schema}`. |
+| HTTP 200 with no deterministic match | Return v1 envelope (`mcp_input_validation`, `TABLE_NOT_FOUND`) with typo-recovery hints/examples. |
+| HTTP 200 non-JSON | Return v1 envelope (`sp_api_client`). |
+| Non-200 | Return v1 envelope (`sp_api_http`). |
+| `requests.get` raises | Return v1 envelope (`sp_api_client`). |
 
-### `get_suggested_table_names(query, ctx=None) -> List[str]`
+### `get_suggested_table_names(query, ctx=None) -> Dict[str, Any]`
 
 Fuzzy table-name discovery via the Rules API.
 
 | Trigger | Behavior |
 |---|---|
-| HTTP 200 with matches | Return `[<leaf>_master, ...]` where `<leaf>` is the last `/`-segment of `attributes.path`. |
-| HTTP 200 no matches | Return `[]`, info-log with query + body preview. |
-| HTTP 200 non-JSON | Return `[]`, warn-log. |
-| Non-200 | Return `[]`, warn-log with status + body preview. |
-| `requests.RequestException` (any network failure) | Return `[]`, warn-log. |
+| HTTP 200 with matches | Return `{query, candidates:[{lookup_key, aliases, destination_table?, rules_path, source, confidence}]}`. |
+| HTTP 200 no matches | Return v1 envelope (`mcp_input_validation`, `TABLE_NOT_FOUND`) with actionable hints/examples. |
+| HTTP 200 non-JSON | Return v1 envelope (`sp_api_client`). |
+| Non-200 | Return v1 envelope (`sp_api_http`). |
+| `requests.RequestException` (any network failure) | Return v1 envelope (`sp_api_client`). |
 
 ### `get_amazon_api_access_token(remote_identity_id, ctx=None) -> Dict[str, Any]`
 

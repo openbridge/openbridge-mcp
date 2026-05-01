@@ -204,7 +204,7 @@ class OpenbridgeAuthMiddleware(Middleware):
             not client_token
             and self._require_client_auth
             and http_request_seen
-            and not _parse_auth_mode(os.getenv("OPENBRIDGE_AUTH_MODE") == "oauth_proxy")
+            and _parse_auth_mode(os.getenv("OPENBRIDGE_AUTH_MODE")) != "oauth_proxy"
         ):
             logger.warning(
                 "Rejecting request: OPENBRIDGE_REQUIRE_CLIENT_AUTH=true and no Bearer token present"

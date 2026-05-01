@@ -1,4 +1,4 @@
-.PHONY: setup test lint serve clean help smoke-redis
+.PHONY: setup test lint serve clean help smoke-redis deploy-ec2
 
 help:  ## Show this help message
 	@echo "Available targets:"
@@ -44,3 +44,6 @@ all: lint check test  ## Run all quality checks
 
 smoke-redis:  ## Live smoke: prove Redis sidecar backs FastMCP cache (requires Docker)
 	./scripts/smoke-redis-cache.sh
+
+deploy-ec2:  ## Deploy the stack to the configured EC2 host (override with EC2_HOST=, SSH_KEY=)
+	./scripts/deploy-ec2.sh

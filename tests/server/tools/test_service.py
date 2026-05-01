@@ -111,10 +111,12 @@ def test_execute_query_short_circuits_on_failed_validation(monkeypatch):
 
     result = asyncio.run(service.execute_query("select 1", "acc", ctx=object()))
 
-    assert result == [{"error": "Query validation failed", "validation": {"decision": {"allowed": False}, "reason": "unsafe"}}]
+    assert result["error_kind"] == "mcp_input_validation"
+    assert result["error_code"] == "INPUT_VALIDATION_FAILED"
+    assert result["_meta"]["validation"]["reason"] == "unsafe"
 
 
-def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
+def test_get_suggested_table_names_returns_candidates_shape(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -134,12 +136,13 @@ def test_get_suggested_table_names_returns_master_suffix(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    names = service.get_suggested_table_names("path-query")
+    result = service.get_suggested_table_names("path-query")
+    assert result["query"] == "path-query"
+    assert [item["lookup_key"] for item in result["candidates"]] == ["order", "product"]
+    assert "product_master" in result["candidates"][1]["aliases"]
 
-    assert names == ["product_master", "order_master"]
 
-
-def test_get_suggested_table_names_returns_empty_on_non_json(monkeypatch):
+def test_get_suggested_table_names_returns_envelope_on_non_json(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -152,17 +155,17 @@ def test_get_suggested_table_names_returns_empty_on_non_json(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    names = service.get_suggested_table_names("path-query")
-
-    assert names == []
+    result = service.get_suggested_table_names("path-query")
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_table_schema_strips_master_suffix(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
-        assert url == "https://service.test/service/rules/prod/v1/rules/search?path__icontains=orders&latest=true"
+    def fake_get(url, params=None, headers=None, timeout=None):
+        assert url == "https://service.test/service/rules/prod/v1/rules/search"
+        assert params == {"path__icontains": "orders", "latest": "true"}
         return SimpleNamespace(
             status_code=200,
             text="{}",
@@ -175,14 +178,14 @@ def test_get_table_schema_strips_master_suffix(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    rules = service.get_table_schema("orders_master")
+    result = service.get_table_schema("orders_master")
 
-    assert rules == {"attributes": {"path": "catalog/orders"}}
+    assert result["lookup_key"] == "orders"
+    assert result["schema"] == {"attributes": {"path": "catalog/orders"}}
 
 
 def test_get_suggested_table_names_extracts_leaf_from_hierarchical_path(monkeypatch):
-    """Real Rules API returns paths like 'amazon-ads/amzn_ads_sp_campaigns'.
-    We want just the leaf name with '_master' appended."""
+    """Real Rules API returns hierarchical paths; candidate lookup keys should use leaves."""
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -200,15 +203,14 @@ def test_get_suggested_table_names_extracts_leaf_from_hierarchical_path(monkeypa
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    names = service.get_suggested_table_names("amzn_ads")
-
-    assert names == [
-        "amzn_ads_sp_advertised_products_master",
-        "amzn_ads_sb_campaigns_master",
+    result = service.get_suggested_table_names("amzn_ads")
+    assert [item["lookup_key"] for item in result["candidates"]] == [
+        "amzn_ads_sb_campaigns",
+        "amzn_ads_sp_advertised_products",
     ]
 
 
-def test_get_suggested_table_names_returns_empty_on_non_200(monkeypatch):
+def test_get_suggested_table_names_returns_envelope_on_non_200(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -217,10 +219,11 @@ def test_get_suggested_table_names_returns_empty_on_non_200(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_suggested_table_names("anything") == []
+    result = service.get_suggested_table_names("anything")
+    assert result["error_kind"] == "sp_api_http"
 
 
-def test_get_suggested_table_names_returns_empty_on_request_exception(monkeypatch):
+def test_get_suggested_table_names_returns_envelope_on_request_exception(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
@@ -231,7 +234,8 @@ def test_get_suggested_table_names_returns_empty_on_request_exception(monkeypatc
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_suggested_table_names("anything") == []
+    result = service.get_suggested_table_names("anything")
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_table_schema_uses_icontains_filter(monkeypatch):
@@ -242,8 +246,9 @@ def test_get_table_schema_uses_icontains_filter(monkeypatch):
 
     captured = {}
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         captured["url"] = url
+        captured["params"] = params
         return SimpleNamespace(
             status_code=200,
             text="{}",
@@ -258,9 +263,10 @@ def test_get_table_schema_uses_icontains_filter(monkeypatch):
 
     result = service.get_table_schema("amzn_ads_sp_advertised_products")
 
-    assert "path__icontains=amzn_ads_sp_advertised_products" in captured["url"]
-    assert "latest=true" in captured["url"]
-    assert result["attributes"]["path"] == "amazon-ads/amzn_ads_sp_advertised_products"
+    assert captured["url"] == "https://service.test/service/rules/prod/v1/rules/search"
+    assert captured["params"] == {"path__icontains": "amzn_ads_sp_advertised_products", "latest": "true"}
+    assert result["lookup_key"] == "amzn_ads_sp_advertised_products"
+    assert result["schema"]["attributes"]["path"] == "amazon-ads/amzn_ads_sp_advertised_products"
 
 
 def test_get_table_schema_picks_exact_suffix_when_multiple_match(monkeypatch):
@@ -271,7 +277,7 @@ def test_get_table_schema_picks_exact_suffix_when_multiple_match(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(
             status_code=200,
             text="{}",
@@ -288,16 +294,17 @@ def test_get_table_schema_picks_exact_suffix_when_multiple_match(monkeypatch):
 
     result = service.get_table_schema("amzn_ads_sp_campaigns")
 
-    assert result["attributes"]["path"] == "amazon-ads/amzn_ads_sp_campaigns"
+    assert result["lookup_key"] == "amzn_ads_sp_campaigns"
+    assert result["schema"]["attributes"]["path"] == "amazon-ads/amzn_ads_sp_campaigns"
 
 
-def test_get_table_schema_returns_none_when_no_matches(monkeypatch):
+def test_get_table_schema_returns_envelope_when_no_matches(monkeypatch):
     """Live-validated case: sp_sales_and_traffic_sku has no rule published.
     Tool must return None cleanly (not raise, not return an unrelated row)."""
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(
             status_code=200,
             text='{"data":[]}',
@@ -306,27 +313,30 @@ def test_get_table_schema_returns_none_when_no_matches(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_table_schema("sp_sales_and_traffic_sku") is None
+    result = service.get_table_schema("sp_sales_and_traffic_sku")
+    assert result["error_kind"] == "mcp_input_validation"
+    assert result["error_code"] == "TABLE_NOT_FOUND"
 
 
-def test_get_table_schema_returns_none_on_non_200(monkeypatch):
+def test_get_table_schema_returns_envelope_on_non_200(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(status_code=403, text="forbidden")
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_table_schema("any_table") is None
+    result = service.get_table_schema("any_table")
+    assert result["error_kind"] == "sp_api_http"
 
 
-def test_get_table_schema_returns_none_on_non_json(monkeypatch):
+def test_get_table_schema_returns_envelope_on_non_json(monkeypatch):
     """A 200 with a non-JSON body (e.g. a proxy error HTML page) must not crash."""
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(
             status_code=200,
             text="<html>gateway error</html>",
@@ -335,7 +345,8 @@ def test_get_table_schema_returns_none_on_non_json(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_table_schema("any_table") is None
+    result = service.get_table_schema("any_table")
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_table_schema_strips_master_suffix_in_query(monkeypatch):
@@ -346,8 +357,9 @@ def test_get_table_schema_strips_master_suffix_in_query(monkeypatch):
 
     captured = {}
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         captured["url"] = url
+        captured["params"] = params
         return SimpleNamespace(
             status_code=200,
             text="{}",
@@ -359,8 +371,8 @@ def test_get_table_schema_strips_master_suffix_in_query(monkeypatch):
     service.get_table_schema("amzn_ads_sp_campaigns_master")
 
     # Suffix must be removed before it hits the wire
-    assert "path__icontains=amzn_ads_sp_campaigns&" in captured["url"]
-    assert "_master" not in captured["url"]
+    assert captured["url"] == "https://service.test/service/rules/prod/v1/rules/search"
+    assert captured["params"] == {"path__icontains": "amzn_ads_sp_campaigns", "latest": "true"}
 
 
 def test_execute_query_denies_on_validation_error(monkeypatch):
@@ -382,17 +394,16 @@ def test_execute_query_denies_on_validation_error(monkeypatch):
 
     result = asyncio.run(service.execute_query("select 1", "acc", ctx=object()))
 
-    assert len(result) == 1
-    assert "error" in result[0]
-    assert "Query validation unavailable" in result[0]["error"]
-    assert result[0]["validation"] == "unavailable"
+    assert result["error_kind"] == "internal_error"
+    assert "Query validation unavailable" in result["summary"]
+    assert result["_meta"]["validation"] == "unavailable"
 
 
 def test_get_amazon_api_access_token_handles_non_json_error_response(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(
             status_code=502,
             text="bad gateway",
@@ -403,9 +414,8 @@ def test_get_amazon_api_access_token_handles_non_json_error_response(monkeypatch
 
     result = service.get_amazon_api_access_token(123)
 
-    assert result["error"] == "Failed to retrieve Amazon API access token"
-    assert result["status"] == 502
-    assert result["details"] == "bad gateway"
+    assert result["error_kind"] == "sp_api_http"
+    assert result["summary"] == "Failed to retrieve Amazon API access token"
 
 
 # ---------------------------------------------------------------------------
@@ -445,10 +455,9 @@ def test_execute_query_non_200_returns_structured_error(monkeypatch):
 
     result = asyncio.run(service.execute_query("SELECT 1 LIMIT 1", "acc", ctx=object()))
 
-    assert len(result) == 1
-    assert result[0]["error"] == "Failed to execute query"
-    assert result[0]["status"] == 502
-    assert result[0]["details"] == "bad gateway"
+    assert result["error_kind"] == "sp_api_http"
+    assert result["summary"] == "Failed to execute query"
+    assert result["_meta"]["status"] == 502
 
 
 def test_execute_query_network_failure_returns_structured_error(monkeypatch):
@@ -469,10 +478,9 @@ def test_execute_query_network_failure_returns_structured_error(monkeypatch):
 
     result = asyncio.run(service.execute_query("SELECT 1 LIMIT 1", "acc", ctx=object()))
 
-    assert len(result) == 1
-    assert result[0]["error"] == "Query execution failed"
-    assert result[0]["status"] is None
-    assert "unreachable" in result[0]["details"]
+    assert result["error_kind"] == "sp_api_client"
+    assert result["summary"] == "Query execution failed"
+    assert result["_meta"]["status"] is None
 
 
 def test_execute_query_non_json_200_returns_structured_error(monkeypatch):
@@ -495,9 +503,9 @@ def test_execute_query_non_json_200_returns_structured_error(monkeypatch):
 
     result = asyncio.run(service.execute_query("SELECT 1 LIMIT 1", "acc", ctx=object()))
 
-    assert len(result) == 1
-    assert result[0]["error"] == "Failed to parse query response"
-    assert result[0]["status"] == 200
+    assert result["error_kind"] == "sp_api_client"
+    assert result["summary"] == "Failed to parse query response"
+    assert result["_meta"]["status"] == 200
 
 
 # --- get_table_schema ------------------------------------------------------
@@ -513,19 +521,19 @@ def test_get_table_schema_network_failure_returns_none(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", raising_get)
 
-    assert service.get_table_schema("amzn_ads_sp_campaigns") is None
+    result = service.get_table_schema("amzn_ads_sp_campaigns")
+    assert result["error_kind"] == "sp_api_client"
 
 
-def test_get_table_schema_returns_none_on_ambiguous_multi_match(monkeypatch):
-    """Contract: when icontains returns multiple rows but none ends with the
-    bare table name, refuse to guess — return None.
+def test_get_table_schema_returns_envelope_on_ambiguous_multi_match(monkeypatch):
+    """Contract: when alias resolution has no deterministic match, return envelope.
 
     This protects callers from silently receiving the wrong rule when their
     search term matches several unrelated paths."""
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(
             status_code=200,
             text="{}",
@@ -540,7 +548,8 @@ def test_get_table_schema_returns_none_on_ambiguous_multi_match(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_table_schema("campaigns") is None
+    result = service.get_table_schema("campaigns")
+    assert result["error_kind"] == "mcp_input_validation"
 
 
 # --- get_amazon_api_access_token ------------------------------------------
@@ -550,7 +559,7 @@ def test_get_amazon_api_access_token_happy_path(monkeypatch):
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         assert url.endswith("/service/amzadv/token/7")
         return SimpleNamespace(
             status_code=200,
@@ -586,15 +595,14 @@ def test_get_amazon_api_access_token_treats_missing_or_falsy_as_error(
     monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
     monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None):
         return SimpleNamespace(status_code=200, text="{}", json=lambda: body)
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
     result = service.get_amazon_api_access_token(7)
 
-    assert "error" in result, f"scenario: {scenario} — result: {result}"
-    assert result.get("access_token") is None or "access_token" not in result
+    assert result["error_kind"] == "auth_error", f"scenario: {scenario} — result: {result}"
 
 
 def test_get_amazon_api_access_token_network_failure_returns_error_shape(monkeypatch):
@@ -608,9 +616,8 @@ def test_get_amazon_api_access_token_network_failure_returns_error_shape(monkeyp
 
     result = service.get_amazon_api_access_token(7)
 
-    assert result["error"] == "Amazon API access token request failed"
-    assert result["status"] is None
-    assert "unreachable" in result["details"]
+    assert result["error_kind"] == "sp_api_client"
+    assert result["_meta"]["status"] is None
 
 
 def test_get_amazon_api_access_token_non_200_returns_error_shape(monkeypatch):
@@ -628,8 +635,42 @@ def test_get_amazon_api_access_token_non_200_returns_error_shape(monkeypatch):
 
     result = service.get_amazon_api_access_token(7)
 
-    assert result["error"] == "Failed to retrieve Amazon API access token"
-    assert result["status"] == 404
+    assert result["error_kind"] == "sp_api_http"
+
+
+def test_get_amazon_api_access_token_sanitizes_traceback_details(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=500,
+            text='Traceback (most recent call last): File "/var/task/service/views/base.py", line 1',
+            json=lambda: (_ for _ in ()).throw(ValueError("not json")),
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_api_access_token(7)
+    assert result["error_kind"] == "internal_error"
+    assert result["_meta"]["sanitized"] is True
+
+
+def test_get_amazon_api_access_token_missing_ritam_id_returns_auth_error(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {"ritam_data": {"name": "missing-id"}},
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_amazon_api_access_token(7)
+    assert result["error_kind"] == "auth_error"
 
 
 # --- get_amazon_advertising_profiles --------------------------------------
@@ -639,7 +680,7 @@ def test_get_amazon_advertising_profiles_returns_empty_when_identity_error(monke
     monkeypatch.setattr(
         service,
         "get_remote_identity_by_id",
-        lambda rid, ctx=None: {"error": "Remote identity 9 not found."},
+        lambda rid, ctx=None: {"_envelope_version": 1, "error_kind": "mcp_input_validation"},
     )
 
     def fail_token(*args, **kwargs):
@@ -647,7 +688,8 @@ def test_get_amazon_advertising_profiles_returns_empty_when_identity_error(monke
 
     monkeypatch.setattr(service, "get_amazon_api_access_token", fail_token)
 
-    assert service.get_amazon_advertising_profiles(9) == []
+    result = service.get_amazon_advertising_profiles(9)
+    assert result["error_kind"] == "mcp_input_validation"
 
 
 def test_get_amazon_advertising_profiles_returns_empty_when_token_has_error(monkeypatch):
@@ -662,9 +704,8 @@ def test_get_amazon_advertising_profiles_returns_empty_when_token_has_error(monk
         service,
         "get_amazon_api_access_token",
         lambda rid, ctx=None: {
-            "error": "Amazon API access token missing from response",
-            "status": 200,
-            "details": {},
+            "_envelope_version": 1,
+            "error_kind": "auth_error",
         },
     )
 
@@ -673,7 +714,8 @@ def test_get_amazon_advertising_profiles_returns_empty_when_token_has_error(monk
 
     monkeypatch.setattr(service.requests, "get", fail_profiles)
 
-    assert service.get_amazon_advertising_profiles(9) == []
+    result = service.get_amazon_advertising_profiles(9)
+    assert result["error_kind"] == "auth_error"
 
 
 def test_get_amazon_advertising_profiles_unknown_region_returns_empty(monkeypatch):
@@ -694,7 +736,8 @@ def test_get_amazon_advertising_profiles_unknown_region_returns_empty(monkeypatc
 
     monkeypatch.setattr(service.requests, "get", fail_profiles)
 
-    assert service.get_amazon_advertising_profiles(9) == []
+    result = service.get_amazon_advertising_profiles(9)
+    assert result["error_kind"] == "mcp_input_validation"
 
 
 def test_get_amazon_advertising_profiles_non_200_returns_empty(monkeypatch):
@@ -714,7 +757,8 @@ def test_get_amazon_advertising_profiles_non_200_returns_empty(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_amazon_advertising_profiles(9) == []
+    result = service.get_amazon_advertising_profiles(9)
+    assert result["error_kind"] == "sp_api_http"
 
 
 def test_get_amazon_advertising_profiles_network_failure_returns_empty(monkeypatch):
@@ -734,7 +778,8 @@ def test_get_amazon_advertising_profiles_network_failure_returns_empty(monkeypat
 
     monkeypatch.setattr(service.requests, "get", raising_get)
 
-    assert service.get_amazon_advertising_profiles(9) == []
+    result = service.get_amazon_advertising_profiles(9)
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_amazon_advertising_profiles_non_json_returns_empty(monkeypatch):
@@ -758,7 +803,8 @@ def test_get_amazon_advertising_profiles_non_json_returns_empty(monkeypatch):
 
     monkeypatch.setattr(service.requests, "get", fake_get)
 
-    assert service.get_amazon_advertising_profiles(9) == []
+    result = service.get_amazon_advertising_profiles(9)
+    assert result["error_kind"] == "sp_api_client"
 
 
 def test_get_amazon_advertising_profiles_happy_path(monkeypatch):
@@ -794,3 +840,122 @@ def test_get_amazon_advertising_profiles_happy_path(monkeypatch):
     assert captured["url"] == "https://advertising-api.amazon.com/v2/profiles"
     assert captured["headers"]["Authorization"] == "Bearer t"
     assert captured["headers"]["Amazon-Advertising-API-ClientId"] == "c"
+
+
+def test_get_suggested_table_names_returns_structured_candidates(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        assert params == {"path__icontains": "sp_orders", "latest": "true"}
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {
+                        "attributes": {
+                            "path": "selling-partner/reports-sales/sp_orders_report",
+                            "destination": {"tablename": "sp_orders_report_v14"},
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_suggested_table_names("sp_orders")
+
+    assert result["query"] == "sp_orders"
+    assert result["candidates"][0]["lookup_key"] == "sp_orders_report"
+    assert "sp_orders_report_master" in result["candidates"][0]["aliases"]
+
+
+def test_get_suggested_table_names_no_match_returns_envelope(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return SimpleNamespace(status_code=200, text='{"data": []}', json=lambda: {"data": []})
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_suggested_table_names("xqzpdq")
+
+    assert result["error_kind"] == "mcp_input_validation"
+    assert result["error_code"] == "TABLE_NOT_FOUND"
+    assert result["hints"]
+    assert result["examples"]
+
+
+def test_get_table_schema_alias_variants_resolve_same_canonical(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {
+                        "attributes": {
+                            "path": "selling-partner/reports-sales/sp_orders_report",
+                            "destination": {"tablename": "sp_orders_report_v14"},
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    bare = service.get_table_schema("sp_orders_report")
+    master = service.get_table_schema("sp_orders_report_master")
+    versioned = service.get_table_schema("sp_orders_report_v14")
+
+    assert bare["lookup_key"] == "sp_orders_report"
+    assert master["lookup_key"] == "sp_orders_report"
+    assert versioned["lookup_key"] == "sp_orders_report"
+
+
+def test_get_table_schema_not_found_includes_suggestions(monkeypatch):
+    monkeypatch.setattr(service, "SERVICE_API_BASE_URL", "https://service.test")
+    monkeypatch.setattr(service, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})
+
+    calls = {"count": 0}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return SimpleNamespace(status_code=200, text='{"data": []}', json=lambda: {"data": []})
+        return SimpleNamespace(
+            status_code=200,
+            text="{}",
+            json=lambda: {
+                "data": [
+                    {
+                        "attributes": {
+                            "path": "selling-partner/reports-sales/sp_orders_report",
+                            "destination": {"tablename": "sp_orders_report_v14"},
+                        }
+                    },
+                    {
+                        "attributes": {
+                            "path": "selling-partner/orders/sp_orders_pii_master",
+                            "destination": {"tablename": "sp_orders_pii_master"},
+                        }
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr(service.requests, "get", fake_get)
+
+    result = service.get_table_schema("sp_orders2")
+
+    assert result["error_kind"] == "mcp_input_validation"
+    assert result["error_code"] == "TABLE_NOT_FOUND"
+    assert result["hints"]
+    assert result["examples"]

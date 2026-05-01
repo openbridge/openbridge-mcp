@@ -80,7 +80,7 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     server = mcp_server.create_mcp_server()
 
     assert isinstance(server, FakeFastMCP)
-    assert server.middleware == [fake_middleware]
+    assert fake_middleware in server.middleware
     assert server.sampling_handler is fake_sampling_handler
 
     expected_tools = {
@@ -188,6 +188,26 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     # validate_query and execute_query should be registered with FASTMCP_SAMPLING_API_KEY
     assert "validate_query" in server.registered_tools
     assert "execute_query" in server.registered_tools
+
+
+def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
+    fake_middleware = object()
+    fake_sampling_handler = object()
+    fake_config = FakeAuthConfig()
+
+    monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "false")
+
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
+    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
+    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
+    monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: fake_sampling_handler)
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert "validate_query" in server.registered_tools
+    assert "execute_query" not in server.registered_tools
 
 
 def test_health_endpoint(monkeypatch):

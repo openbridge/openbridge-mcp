@@ -4,24 +4,29 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 from fastmcp.server.context import Context
+from pydantic import ConfigDict, StrictInt, validate_call
 
+from src.utils.table_resolver import merge_payloads_and_rules
+from src.utils.envelope import make_error
 from src.utils.logging import get_logger
 from .base import get_api_timeout, get_auth_headers
 
 logger = get_logger("products")
 
 PRODUCT_API_BASE_URL = os.getenv("PRODUCT_API_BASE_URL", 'https://service.api.openbridge.io/service/products/product')
+SERVICE_API_BASE_URL = os.getenv("SERVICE_API_BASE_URL", 'https://service.api.openbridge.io')
 SUBSCRIPTIONS_API_BASE_URL = os.getenv("SUBSCRIPTIONS_API_BASE_URL", 'https://subscriptions.api.openbridge.io')
 MAX_PAGES = 100  # Safety limit for pagination
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def get_product_stage_ids(
-    product_id: Optional[str],
+    product_id: Optional[StrictInt],
     ctx: Optional[Context] = None,
-) -> List[dict]:
+) -> List[dict] | Dict[str, object]:
     """
     Get the stage IDs for a specific product.
     Args:
-        product_id (Optional[str]): The ID of the product to retrieve stage IDs for.
+        product_id (Optional[int]): The ID of the product to retrieve stage IDs for.
     Returns:
         List[dict]: A list of stage IDs associated with the product, or an error message if the request fails.
     """
@@ -41,7 +46,18 @@ def get_product_stage_ids(
         return product_stage_ids
     else:
         logger.warning(f"Failed to retrieve product stage IDs for {product_id}: {response.status_code}")
-        return [{"error": f"Failed to retrieve product stage IDs: {response.status_code} {response.text}"}]
+        return make_error(
+            tool="get_product_stage_ids",
+            error_kind="sp_api_http",
+            summary=f"Failed to retrieve product stage IDs for product {product_id}",
+            error_code="TOOL_EXECUTION_FAILED",
+            retryable=response.status_code >= 500,
+            details=[{
+                "path": "product_id",
+                "issue": f"Products API returned HTTP {response.status_code}",
+                "received_type": "HTTPStatusError",
+            }],
+        )
 
 
 # Helper functions for new table discovery tools
@@ -206,56 +222,70 @@ def _fetch_product_payloads(
     Fetch payloads for a product, optionally filtered by stage_ids.
     Returns list of payload dictionaries with name, stage_id, and id.
     """
-    try:
-        params = {}
-        is_legacy = stage_ids is not None and 0 in stage_ids
+    params = {}
+    is_legacy = stage_ids is not None and 0 in stage_ids
 
-        # Only apply stage_id__gte filter for non-legacy subscriptions
-        if not is_legacy:
-            params["stage_id__gte"] = 1000
+    # Only apply stage_id__gte filter for non-legacy subscriptions
+    if not is_legacy:
+        params["stage_id__gte"] = 1000
 
-        response = requests.get(
-            f"{PRODUCT_API_BASE_URL}/{product_id}/payloads",
-            params=params,
-            headers=headers,
-            timeout=get_api_timeout(),
-        )
-        response.raise_for_status()
-        data = response.json()
+    response = requests.get(
+        f"{PRODUCT_API_BASE_URL}/{product_id}/payloads",
+        params=params,
+        headers=headers,
+        timeout=get_api_timeout(),
+    )
+    response.raise_for_status()
+    data = response.json()
 
-        payloads = data.get("data", [])
+    payloads = data.get("data", [])
 
-        # Filter by stage_ids if provided and not legacy
-        if stage_ids is not None and not is_legacy:
-            payloads = [
-                p for p in payloads
-                if p.get("attributes", {}).get("stage_id") in stage_ids
-            ]
+    # Filter by stage_ids if provided and not legacy
+    if stage_ids is not None and not is_legacy:
+        payloads = [
+            p for p in payloads
+            if p.get("attributes", {}).get("stage_id") in stage_ids
+        ]
 
-        # Format results
-        results = []
-        for payload in payloads:
-            attributes = payload.get("attributes", {})
-            results.append({
-                "name": attributes.get("name"),
-                "stage_id": attributes.get("stage_id"),
-                "id": int(payload.get("id")),
-            })
+    # Format results
+    results = []
+    for payload in payloads:
+        attributes = payload.get("attributes", {})
+        results.append({
+            "name": attributes.get("name"),
+            "stage_id": attributes.get("stage_id"),
+            "id": int(payload.get("id")),
+        })
 
-        logger.debug(f"Found {len(results)} payloads for product {product_id}")
-        return results
+    logger.debug(f"Found {len(results)} payloads for product {product_id}")
+    return results
 
-    except requests.exceptions.RequestException as exc:
-        logger.error(f"Failed to fetch payloads for product {product_id}: {exc}")
+
+def _search_rules_for_term(term: str, headers: Dict[str, str]) -> List[dict]:
+    """Best-effort rules lookup used to enrich payload discovery."""
+    response = requests.get(
+        f"{SERVICE_API_BASE_URL}/service/rules/prod/v1/rules/search",
+        params={"path__icontains": term, "latest": "true"},
+        headers=headers,
+        timeout=get_api_timeout(),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
         return []
+    data = payload.get("data", [])
+    if isinstance(data, list):
+        return data
+    return []
 
 
 # Public MCP tools
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def search_products(
     query: str,
     ctx: Optional[Context] = None,
-) -> List[dict]:
+) -> List[dict] | Dict[str, object]:
     """
     Search for Openbridge products by name.
 
@@ -287,14 +317,26 @@ def search_products(
 
     except Exception as exc:
         logger.error(f"Error searching products: {exc}")
-        return [{"error": str(exc)}]
+        return make_error(
+            tool="search_products",
+            error_kind="internal_error",
+            summary="Error searching products",
+            error_code="INTERNAL_ERROR",
+            retryable=False,
+            details=[{
+                "path": "query",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+        )
 
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def list_product_tables(
-    product_id: int,
-    subscription_id: Optional[int] = None,
+    product_id: StrictInt,
+    subscription_id: Optional[StrictInt] = None,
     ctx: Optional[Context] = None,
-) -> List[dict]:
+) -> Dict[str, object]:
     """
     List tables (payloads) available for a product.
 
@@ -309,15 +351,12 @@ def list_product_tables(
         subscription_id: Optional subscription ID to filter by stage_ids
 
     Returns:
-        List of tables with name, stage_id, and id fields.
+        Dict with ``product_id`` and ``tables``. ``tables`` includes
+        payload-backed rows and rules-only discoverables when available.
 
     Example:
         list_product_tables(product_id=50)
-        → [{"name": "amzn_ads_sb_campaigns", "stage_id": 1004, "id": 2184}, ...]
-
-        list_product_tables(product_id=50, subscription_id=128853)
-        → [{"name": "amzn_ads_sb_campaigns", "stage_id": 1004, "id": 2184}, ...]
-          (filtered by subscription's stage_ids)
+        → {"product_id": 50, "tables": [{"lookup_key": "...", ...}]}
     """
     headers = get_auth_headers(ctx)
 
@@ -335,17 +374,107 @@ def list_product_tables(
                     )
                     product_id = sub_product_id
             except ValueError as exc:
-                return [{"error": str(exc)}]
+                return make_error(
+                    tool="list_product_tables",
+                    error_kind="mcp_input_validation",
+                    summary=str(exc),
+                    error_code="INPUT_VALIDATION_FAILED",
+                    retryable=False,
+                    details=[{
+                        "path": "subscription_id",
+                        "issue": str(exc),
+                        "received_type": type(subscription_id).__name__,
+                    }],
+                )
 
         # Fetch payloads (tables)
-        payloads = _fetch_product_payloads(product_id, stage_ids, headers)
+        try:
+            payloads = _fetch_product_payloads(product_id, stage_ids, headers)
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            return make_error(
+                tool="list_product_tables",
+                error_kind="sp_api_http",
+                summary=f"Products API failed while listing tables for product {product_id}",
+                error_code="TOOL_EXECUTION_FAILED",
+                retryable=bool(status and status >= 500),
+                details=[{
+                    "path": "product_id",
+                    "issue": "Products API returned a non-200 status",
+                    "received_type": "HTTPStatusError",
+                    "status": status,
+                }],
+            )
+        except requests.exceptions.RequestException as exc:
+            return make_error(
+                tool="list_product_tables",
+                error_kind="sp_api_client",
+                summary=f"Products API request failed for product {product_id}",
+                error_code="TOOL_EXECUTION_FAILED",
+                retryable=True,
+                details=[{
+                    "path": "product_id",
+                    "issue": str(exc),
+                    "received_type": type(exc).__name__,
+                }],
+            )
 
-        if not payloads:
+        rules_rows: List[dict] = []
+        seen_terms = set()
+        for payload in payloads:
+            name = payload.get("name")
+            if not isinstance(name, str):
+                continue
+            term = name.strip().lower()
+            if not term or term in seen_terms:
+                continue
+            seen_terms.add(term)
+            try:
+                rules_rows.extend(_search_rules_for_term(term, headers))
+            except requests.exceptions.RequestException as exc:
+                logger.warning(
+                    "Rules enrichment failed for product=%s term=%s: %s",
+                    product_id,
+                    term,
+                    exc,
+                )
+
+        merged_tables = merge_payloads_and_rules(payloads, rules_rows)
+        if not merged_tables:
             logger.info(f"No tables found for product {product_id}")
-            return []
+            return make_error(
+                tool="list_product_tables",
+                error_kind="mcp_input_validation",
+                summary=f"No tables found for product {product_id}",
+                error_code="TABLE_NOT_FOUND",
+                retryable=False,
+                details=[{
+                    "path": "product_id",
+                    "issue": "No payload-backed or rules-backed tables were found",
+                    "received_type": type(product_id).__name__,
+                }],
+                hints=[
+                    "Verify the product_id from search_products() first.",
+                    "If this product is report-driven, use get_table_schema() with likely report keys.",
+                ],
+            )
 
-        return payloads
+        return {
+            "product_id": product_id,
+            "tables": merged_tables,
+        }
 
     except Exception as exc:
         logger.error(f"Error listing product tables: {exc}")
-        return [{"error": str(exc)}]
+        return make_error(
+            tool="list_product_tables",
+            error_kind="internal_error",
+            summary="Error listing product tables",
+            error_code="INTERNAL_ERROR",
+            retryable=False,
+            details=[{
+                "path": "product_id",
+                "issue": str(exc),
+                "received_type": type(exc).__name__,
+            }],
+        )

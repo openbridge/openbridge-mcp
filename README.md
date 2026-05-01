@@ -74,6 +74,7 @@ Required for server and tools to function. Values typically point to your enviro
   - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default empty): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets — leave empty unless instructed otherwise.
 - Query Validation (AI-powered)
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools use AI-powered sampling to validate SQL queries and ensure they follow best practices (read-only operations, proper LIMIT clauses, etc.). Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
+  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `true`): Controls registration of the `execute_query` tool independently of `validate_query`. Set to `false` to keep validation-only mode enabled.
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint for query validation.
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Explicitly opt in to sending SQL text to the configured OpenAI-compatible endpoint for validation. When disabled the server uses heuristics only.
@@ -99,6 +100,8 @@ OPENBRIDGE_API_TIMEOUT=45
 
 # Opt-in to AI validation; by default only heuristics run and no SQL leaves your environment
 OPENBRIDGE_ENABLE_LLM_VALIDATION=false
+# Optional hard gate for query execution tool registration
+OPENBRIDGE_ENABLE_QUERY_EXECUTION=true
 
 # Query validation (AI-powered) - required for validate_query and execute_query tools
 FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
@@ -185,7 +188,9 @@ See [docs/tool-coverage-matrix.md](docs/tool-coverage-matrix.md) for endpoint-fa
     - Example LLM request: `Fetch remote identity 12345 and show the flattened attributes`
 
 - Query (heuristics by default, optional LLM validation)
-  - **Availability**: Both query tools require `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` to be configured.
+  - **Availability**:
+    - `validate_query` requires `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY`.
+    - `execute_query` requires the same key plus `OPENBRIDGE_ENABLE_QUERY_EXECUTION=true`.
   - **Opt-in behavior**: Set `OPENBRIDGE_ENABLE_LLM_VALIDATION=true` to allow SQL text to be sent to the configured OpenAI-compatible endpoint. By default (`false`), validation is heuristic-only and SQL is not sent to an LLM.
   - `validate_query`
     - Validates SQL safety and best practices. Uses heuristics in default mode and optional LLM analysis when explicitly enabled. Pass `allow_unbounded=True` to permit queries without `LIMIT` clauses.
@@ -196,10 +201,10 @@ See [docs/tool-coverage-matrix.md](docs/tool-coverage-matrix.md) for endpoint-fa
 
 - Rules - see [our data catalog documentation](https://docs.openbridge.com/en/articles/2247373-data-catalog-how-we-organize-and-manage-data-in-your-data-lake-or-cloud-warehouse) for more information.
   - `get_suggested_table_names`
-    - Searches the Rules API (via the Service API) for tables that match the intent of your SQL, returning `_master` suffixed table names plus usage guidance.
+    - Searches the Rules API (via the Service API) and returns structured candidates (`lookup_key`, aliases, destination table, rules path, confidence). Empty/no-match returns a v1 `TABLE_NOT_FOUND` envelope with recovery hints.
     - Example LLM request: `Suggest the best table names for a query about sponsored product spend`
   - `get_table_schema`
-    - Fetches the rules document for a table, whether or not you provide the `_master` suffix, so you can confirm allowed filters and columns.
+    - Fetches rules for a table and resolves alias variants (`bare`, `_master`, `_vNN`) to a canonical lookup key. Success returns normalized schema metadata; misses return a v1 `TABLE_NOT_FOUND` envelope with fuzzy suggestions.
     - Example LLM request: `Show the rules for table retail_orders_master`
 
 - Service
@@ -254,11 +259,12 @@ See [docs/tool-coverage-matrix.md](docs/tool-coverage-matrix.md) for endpoint-fa
 
 - Products & Table Discovery
   - **Interactive workflow**: Use `search_products` → `list_product_tables` → `get_table_schema` for guided table discovery
+  - **Type convention**: numeric IDs are strict integers (`123`), not string values (`"123"`).
   - `search_products`
     - Search for Openbridge products by name (case-insensitive). Returns matching products with IDs for use with `list_product_tables`.
     - Example LLM request: `Find products matching "Amazon Ads Sponsored"`
   - `list_product_tables`
-    - List tables (payloads) available for a product. Optionally filter by `subscription_id` to show only tables enabled for that subscription based on stage_ids.
+    - List tables for a product as a structured response (`{product_id, tables}`), merging payload-backed rows with rules-only discoverables when available. Optionally filter by `subscription_id` to respect stage_ids.
     - Example LLM request: `Show me all tables for product 50` or `List tables for product 50 subscription 128853`
   - `get_product_stage_ids`
     - Returns stage IDs for a product, applying sensible `stage_id__gte` filters so you can quickly feed the results into job creation.

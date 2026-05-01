@@ -189,6 +189,8 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
 - **Query Validation (AI-powered)**
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable `validate_query` and `execute_query` tools
     - Without this, query validation tools are not registered
+  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `true`): Controls `execute_query` registration independently
+    - When `false`, `validate_query` remains available but `execute_query` is not registered
   - `FASTMCP_SAMPLING_MODEL` (optional, default `gpt-4o-mini`): OpenAI model for query validation
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Opt-in to send SQL to LLM
@@ -314,6 +316,7 @@ def test_create_job_success():
 - Use Pydantic models for request/response shapes
 - Avoid ad-hoc dicts inside tools to preserve validation
 - Keep stylistic changes separate from behavior updates
+- Numeric IDs in tool signatures are strict integers. Use `123`, not `"123"`.
 
 ## Git & Commit Standards
 

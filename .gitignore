@@ -1,7 +1,8 @@
 # Environment
 .env
+scripts/*
 docker-compose.local.yml
-
+*.pem
 # Python
 __pycache__/
 *.py[cod]
