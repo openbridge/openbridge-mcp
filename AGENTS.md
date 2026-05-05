@@ -60,6 +60,56 @@ mcp.tool(
 )(module.function_name)
 ```
 
+## Skills
+
+The repo ships a FastMCP skill at `skills/openbridge-mcp/` that's auto-loaded into the running server via `SkillsDirectoryProvider` (registered in `src/server/mcp_server.py`). Connected MCP clients see it as **resources**, not tools or prompts:
+
+- `skill://openbridge-mcp/SKILL.md` — main instruction file
+- `skill://openbridge-mcp/_manifest` — synthetic JSON listing every file in the skill bundle (path, size, hash)
+- `skill://openbridge-mcp/references/<name>.md` — supporting reference docs (workflows, code-mode, error-envelope, embed-cli, tools-catalog)
+- `skill://openbridge-mcp/evals/evals.json` — eval fixtures
+- `skill://openbridge-mcp/mcp-servers.json` — bundled MCP server list
+
+Discovery from a client:
+```python
+async with Client("https://mcp.openbridge.com/mcp", auth=...) as client:
+    resources = await client.list_resources()
+    skill_uris = [str(r.uri) for r in resources if str(r.uri).startswith("skill://")]
+    skill_md = await client.read_resource("skill://openbridge-mcp/SKILL.md")
+```
+
+### Adding a new skill
+
+1. Create a new directory under `skills/` (e.g., `skills/my-skill/`).
+2. Add `SKILL.md` with YAML frontmatter at the top:
+   ```markdown
+   ---
+   name: my-skill
+   description: One paragraph that triggers the skill.
+   version: "0.1.0"
+   ---
+   # ...skill content...
+   ```
+3. Optional supporting files in `references/` or `evals/` subdirs are auto-exposed because the provider is wired with `supporting_files="resources"`.
+4. Rebuild the Docker image (`docker compose up --build`) so `COPY skills/ /app/skills/` picks up the new directory. Reload is **off** in production — skills snapshot at image build time.
+5. The provider config lives at `src/server/mcp_server.py:_resolve_skills_root()` and the registration block. No change needed when adding new skill subdirectories.
+
+### Caveats
+
+- Skill content lives behind the same auth boundary as tools (the FastMCP middleware chain wraps resource calls too). `OPENBRIDGE_REQUIRE_CLIENT_AUTH=true` deployments require a Bearer token to read skill resources.
+- If `skills/` is absent (stripped install), the server boots cleanly with zero skill resources — `_resolve_skills_root()` returns `None` and registration is skipped.
+
+### Tool-only host workaround (`list_skills` / `read_skill`)
+
+Some MCP hosts only route `tools/*` traffic into the assistant context. Claude.ai's MCP host as of 2026-05-01 is the verified example — its Code Mode sandbox can call `call_tool(...)` but has no analogue for `list_resources()` / `read_resource()`. To make skills discoverable from inside such hosts, two meta-tools wrap the resource API:
+
+- **`list_skills()`** → returns `[{uri, name, description, mime_type}, ...]` for every `skill://` resource.
+- **`read_skill(uri)`** → returns `{uri, content, mime_type}` for the body of a single skill resource.
+
+Both call `ctx.fastmcp.list_resources()` / `ctx.fastmcp.read_resource()` in-process — the call never crosses the wire, so the host's tool-channel filter doesn't apply. Errors return v1 envelopes.
+
+Hosts that natively surface MCP resources (Claude Code, MCP Inspector, FastMCP `Client` SDK) should keep using the resource API directly — it's the FastMCP-blessed pattern. The wrappers exist solely as a host-compatibility shim; they're registered as `meta` category in `TOOL_MANIFEST` and visible from `get_capabilities`.
+
 ## Table Discovery Workflow
 
 The MCP server provides an interactive, multi-step workflow for discovering tables and schemas:

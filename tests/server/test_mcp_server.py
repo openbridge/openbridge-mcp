@@ -22,6 +22,14 @@ class FakeFastMCP:
         self.registered_tools = {}
         self.custom_routes = {}
         self.transforms = []
+        # Skills providers (or any other FastMCP provider) registered
+        # via ``add_provider``. The shape mirrors ``transforms`` and
+        # ``middleware`` — a list of opaque registrations the test can
+        # introspect by ``isinstance`` if it cares.
+        self.providers = []
+
+    def add_provider(self, provider):
+        self.providers.append(provider)
 
     def add_middleware(self, mw):
         self.middleware.append(mw)
@@ -85,6 +93,8 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
 
     expected_tools = {
         "get_capabilities",
+        "list_skills",
+        "read_skill",
         "get_remote_identities",
         "get_remote_identity_by_id",
         "validate_query",
@@ -140,6 +150,8 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
     # Should have all tools EXCEPT validate_query and execute_query
     expected_tools = {
         "get_capabilities",
+        "list_skills",
+        "read_skill",
         "get_remote_identities",
         "get_remote_identity_by_id",
         # validate_query and execute_query should be MISSING

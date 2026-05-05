@@ -1,0 +1,194 @@
+{
+  "skill_name": "openbridge-mcp",
+  "skill_version": "0.1.2",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I'm using the openbridge MCP and the client only shows me four tools: tags, search, get_schema, and execute. I want to list all active jobs for subscription 128853. What do I do?",
+      "expected_output": "Recognizes Code Mode is active, instructs to use execute() with await get_jobs(subscription_id=128853, status='active'), optionally calls get_schema('get_jobs') first if uncertain.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "identifies-code-mode",
+          "condition": "Output identifies the meta-tool surface as Code Mode (CODE_MODE=true) or recognizes that individual tools must be called inside execute()"
+        },
+        {
+          "name": "uses-execute-with-await",
+          "condition": "Output shows calling get_jobs (or equivalent) inside execute() with await, not as a top-level tool call"
+        },
+        {
+          "name": "names-correct-tool",
+          "condition": "Output references the get_jobs tool (not list_jobs, jobs.list, or similar) and passes subscription_id"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Backfill subscription 987 from 2024-01-01 to 2024-01-07. The subscription's product is 50 (Amazon Ads — Sponsored Brands). Walk me through it on the openbridge MCP.",
+      "expected_output": "Sequence: get_subscription_by_id (or skip with rationale) → get_product_stage_ids(product_id=50) → create_job with subscription_id, ISO date_start/date_end, and an explicit stage_ids list. Notes that stage_ids is required by the MCP schema.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "uses-get-product-stage-ids",
+          "condition": "Output instructs calling get_product_stage_ids (or equivalent stage discovery) before creating the job"
+        },
+        {
+          "name": "passes-stage-ids-explicit",
+          "condition": "Output shows create_job receiving an explicit stage_ids list — not omitting it or using a wildcard"
+        },
+        {
+          "name": "stage-ids-required-on-mcp",
+          "condition": "Output communicates that stage_ids is required by the MCP schema (omitting it returns a Pydantic validation error, not a wildcard backfill). The CLI's --stage may be optional, but the MCP path requires the list."
+        },
+        {
+          "name": "uses-iso-date-format",
+          "condition": "Output uses YYYY-MM-DD ISO date format for date_start and date_end"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I'm seeing healthcheck errors for subscription 555 over the last week. Show me how to triage on the openbridge MCP, including pulling details on a specific failing transaction.",
+      "expected_output": "Calls get_healthchecks(subscription_id=555, filter_date='YYYY-MM-DD') — scoped, not unfiltered, using filter_date (not last_days, which the MCP schema doesn't accept). Surfaces grouping by error_code. Drills into a single transaction with get_history_by_id(history_id=...). Notes that update_history_status is destructive and needs confirmation.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "scopes-healthcheck-call",
+          "condition": "Output passes subscription_id and a filter_date (or scoping intent) to get_healthchecks rather than calling unfiltered. Does NOT use last_days as an MCP parameter."
+        },
+        {
+          "name": "drills-with-history-by-id",
+          "condition": "Output uses get_history_by_id (or equivalent) to drill into a specific failing transaction"
+        },
+        {
+          "name": "cites-error-code-as-stable",
+          "condition": "Output mentions error_code (not just err_msg / summary) as the stable identifier for triage or escalation"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I want to query data from amzn_ads_sb_campaigns_master on key finance via the openbridge MCP. Walk me through it end-to-end.",
+      "expected_output": "Capability-aware path: instructs the model to call get_capabilities() first to confirm validate_query / execute_query are registered (they're gated on OPENBRIDGE_ENABLE_LLM_VALIDATION + a sampling key). On the GREEN path: search_products → list_product_tables → get_table_schema → validate_query (with LIMIT) → execute_query. On the disabled path: stops at get_table_schema and tells the user to run the SQL in their warehouse client directly.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "checks-capabilities-first",
+          "condition": "Output instructs calling get_capabilities (or equivalent capability check) before assuming validate_query / execute_query are available — does not jump straight to executing SQL via the MCP"
+        },
+        {
+          "name": "acknowledges-conditional-registration",
+          "condition": "Output states that validate_query / execute_query are conditionally registered — gated on OPENBRIDGE_ENABLE_LLM_VALIDATION and a sampling/OpenAI API key — and may be absent on default deployments"
+        },
+        {
+          "name": "falls-back-to-warehouse-client",
+          "condition": "Output explains that when the query tools are unavailable, the schema from get_table_schema is the deliverable and the user should run the SQL in their warehouse client directly"
+        },
+        {
+          "name": "uses-master-or-destination-tablename",
+          "condition": "Output preserves _master in the SQL or instructs reading destination.tablename from get_table_schema output to find the actual destination-specific table name"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "The openbridge MCP just returned this error envelope: {\"error_kind\": \"rate_limited\", \"tool\": \"get_jobs\", \"summary\": \"429\", \"_envelope_version\": 1, \"_meta\": {\"retry_after_seconds\": 1.5}, \"retryable\": true}. What should I do?",
+      "expected_output": "Recognizes rate_limited error_kind, reads _meta.retry_after_seconds, instructs to back off by that delay before retrying, does not retry immediately.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "reads-error-kind",
+          "condition": "Output identifies the error_kind value (rate_limited) and uses it to choose recovery action"
+        },
+        {
+          "name": "uses-retry-after",
+          "condition": "Output reads _meta.retry_after_seconds (1.5) and waits that duration before retrying"
+        },
+        {
+          "name": "no-immediate-retry",
+          "condition": "Output does not recommend retrying immediately or in a tight loop"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "On the openbridge MCP (Code Mode), list active primary jobs for subscription 128853 and look up the subscription itself. Show me the calls.",
+      "expected_output": "Two calls inside execute(): get_jobs(subscription_id=128853, status='active', is_primary='true') — note is_primary is a STRING per the server schema, not a Python bool. Then get_subscription_by_id(subscription_id='128853') — STRING, not int. Output ideally mentions reading get_schema for unfamiliar tools or notes that ID types vary across tools.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "is-primary-as-string",
+          "condition": "Call to get_jobs uses is_primary='true' (string) — not primary=True (bool); the parameter name is is_primary, not primary"
+        },
+        {
+          "name": "subscription-id-as-string-on-by-id",
+          "condition": "Call to get_subscription_by_id passes subscription_id as a string ('128853'), not as an int — matching the server schema"
+        },
+        {
+          "name": "acknowledges-type-discrepancy",
+          "condition": "Output mentions either reading the live schema via get_schema(...) when uncertain, or notes that ID types differ across tools (some str, some int) so the model should not assume uniformity"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "On the openbridge MCP (Code Mode), get healthchecks for subscription 555 from yesterday. What's the call?",
+      "expected_output": "get_healthchecks(subscription_id='555', filter_date='YYYY-MM-DD') — uses filter_date with a specific ISO date, not last_days (the MCP schema does not accept last_days or page). For multi-day windows, recommend filter_date iteration or embed-cli's --last-days flag.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "uses-filter-date",
+          "condition": "Call to get_healthchecks uses filter_date with a YYYY-MM-DD ISO date string, not last_days"
+        },
+        {
+          "name": "no-last-days-on-mcp",
+          "condition": "Output does NOT pass last_days= or page= as a parameter to the MCP get_healthchecks call. (Output may still mention embed-cli's --last-days flag as the multi-day-window alternative — that's fine.)"
+        },
+        {
+          "name": "passes-subscription-id",
+          "condition": "Output passes subscription_id (form acceptable; the parameter name is what matters)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "I called get_remote_identity_by_id(remote_identity_id=\"99999\") on the openbridge MCP and the response was: {\"error\": \"Remote identity 99999 not found.\"}. Is this a v1 envelope I should retry on?",
+      "expected_output": "Recognizes this as a flat error dict, NOT a v1 envelope (no error_kind, no _envelope_version, no _meta). Explains that some failure modes return flat dicts (not-found on this tool, upstream non-2xx on Amazon service tools), others return v1 envelopes (rate limit, validation pre-flight, internal exception), and others raise (unknown tool, bad keyword arg, wrong type). Does not recommend retrying — 404 is permanent.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "identifies-flat-error",
+          "condition": "Output identifies the response as a flat error dict (no error_kind, no _envelope_version), distinct from a v1 envelope"
+        },
+        {
+          "name": "no-retry-recommendation",
+          "condition": "Output does not recommend retrying as if it were a transient error — recognizes that 'not found' is terminal"
+        },
+        {
+          "name": "explains-return-vs-raise",
+          "condition": "Output explains that the openbridge MCP failure surface is mixed: some modes return flat dicts, some return v1 envelopes, some raise inside execute() — and identifies this specific response as the flat-dict not-found path"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "I'm in Code Mode on the openbridge MCP. I called tags() and got back 'untagged (22 tools)' as the only entry. What does that tell me, and what should I do next?",
+      "expected_output": "Recognizes that on this server tags() currently returns a single flat 'untagged' bucket — the family-grouping is not populated. Treats it as a sanity-check / count check rather than discovery. Redirects the user to search(query) with intent phrases. Does not fabricate family names like 'jobs', 'subscriptions', 'healthchecks'.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "acknowledges-flat-tags",
+          "condition": "Output recognizes that tags() on this server returns a flat single-bucket result (not structured families), and treats this as expected/known rather than an error"
+        },
+        {
+          "name": "falls-back-to-search",
+          "condition": "Output recommends search(query) with intent phrases as the working tool-discovery path"
+        },
+        {
+          "name": "no-fabricated-families",
+          "condition": "Output does NOT invent fake family names (e.g. 'jobs', 'subscriptions', 'healthchecks') and present them as something tags() returned. The only family observed is 'untagged'."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "mcpServers": {
+    "openbridge": {
+      "required": true,
+      "description": "Openbridge MCP server (FastMCP). Default production endpoint is https://mcp.openbridge.com/mcp/ and it runs in OAuth proxy mode (OPENBRIDGE_AUTH_MODE=oauth_proxy) — clients authenticate via a browser OAuth code flow rather than passing raw refresh tokens. Self-hosted instances may run in refresh_token mode (Bearer xxx:yyy or unexpired JWT). Code Mode default exposes meta-tools tags/search/get_schema/execute; CODE_MODE=false exposes the full direct catalog. Required tools listed below cover jobs, healthchecks, subscriptions, products/tables/schemas, rules, and remote identities. The SQL query tools (validate_query, execute_query) are CONDITIONALLY registered — only when OPENBRIDGE_ENABLE_LLM_VALIDATION=true and FASTMCP_SAMPLING_API_KEY (or OPENAI_API_KEY) is set. The skill detects them at runtime via get_capabilities() and falls back to schema-only output when they're absent.",
+      "type": "http",
+      "url": "${OPENBRIDGE_MCP_URL:-https://mcp.openbridge.com/mcp/}",
+      "tools": [
+        "tags",
+        "search",
+        "get_schema",
+        "get_schemas",
+        "execute",
+        "get_capabilities",
+        "get_jobs",
+        "get_job_by_id",
+        "get_history_by_id",
+        "update_history_status",
+        "create_job",
+        "get_healthchecks",
+        "get_subscriptions",
+        "get_subscription_by_id",
+        "create_subscription",
+        "update_subscription",
+        "cancel_subscription",
+        "get_storage_subscriptions",
+        "search_products",
+        "list_product_tables",
+        "get_product_stage_ids",
+        "get_table_schema",
+        "get_suggested_table_names",
+        "get_remote_identities",
+        "get_remote_identity_by_id",
+        "get_amazon_api_access_token",
+        "get_amazon_advertising_profiles"
+      ]
+    }
+  }
+}

@@ -749,7 +749,7 @@ wheels = [
 
 [[package]]
 name = "openbridge-mcp"
-version = "0.3.0"
+version = "0.3.3"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp", extra = ["code-mode", "tasks"] },

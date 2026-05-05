@@ -16,6 +16,10 @@
 !README.md
 !src/
 !schemas/
+# FastMCP SkillsDirectoryProvider reads ./skills/<skill>/SKILL.md and
+# supporting files (references/*.md, evals/*) at runtime. Whitelist
+# them so `COPY skills/ /app/skills/` finds them in the build context.
+!skills/
 
 # Re-deny anything that snuck into the allow-listed dirs above.
 **/__pycache__
@@ -24,3 +28,10 @@
 **/.pytest_cache
 **/.ruff_cache
 **/.mypy_cache
+# macOS AppleDouble resource-fork sidecar files. `tar` on darwin
+# emits these alongside every regular file when packaging a directory
+# with extended attributes; FastMCP's SkillsDirectoryProvider would
+# otherwise expose them as supporting resources (e.g.
+# skill://openbridge-mcp/._SKILL.md). Verified 2026-05-01.
+**/._*
+**/.DS_Store
