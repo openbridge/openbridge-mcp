@@ -108,6 +108,8 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
         "get_product_stage_ids",
         "search_products",
         "list_product_tables",
+        "get_product_card",
+        "list_all_product_basic_metadata",
     }
 
     assert expected_tools == set(server.registered_tools)
@@ -160,6 +162,8 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
         "get_product_stage_ids",
         "search_products",
         "list_product_tables",
+        "get_product_card",
+        "list_all_product_basic_metadata",
     }
 
     assert expected_tools == set(server.registered_tools)
