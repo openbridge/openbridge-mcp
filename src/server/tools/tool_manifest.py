@@ -106,5 +106,13 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
         "category": "products",
         "description": "List all tables (data payloads) available for a specific product.",
     },
+    "get_product_card": {
+        "category": "products",
+        "description": "Get detailed metadata for a product: required remote identity type, subscription requirements, pipeline stages, and scheduling info.",
+    },
+    "list_all_product_basic_metadata": {
+        "category": "products",
+        "description": "Get metadata for all available Openbridge products. Use for product discovery when the specific product name is unknown.",
+    },
 }
 

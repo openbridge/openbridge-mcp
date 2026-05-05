@@ -768,7 +768,6 @@ def get_amazon_advertising_profiles(
         }],
     )
 
-
 def get_suggested_table_names(
     query: str,
     ctx: Optional[Context] = None,

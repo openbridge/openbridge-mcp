@@ -14,11 +14,111 @@ from .base import get_api_timeout, get_auth_headers
 logger = get_logger("products")
 
 PRODUCT_API_BASE_URL = os.getenv("PRODUCT_API_BASE_URL", 'https://service.api.openbridge.io/service/products/product')
-SERVICE_API_BASE_URL = os.getenv("SERVICE_API_BASE_URL", 'https://service.api.openbridge.io')
+PRODUCT_CARDS_API_BASE_URL = os.getenv("PRODUCT_CARDS_API_BASE_URL", 'https://service.api.openbridge.io/service/product-cards/card')
 SUBSCRIPTIONS_API_BASE_URL = os.getenv("SUBSCRIPTIONS_API_BASE_URL", 'https://subscriptions.api.openbridge.io')
+SERVICE_API_BASE_URL = os.getenv("SERVICE_API_BASE_URL", 'https://service.api.openbridge.io')
 MAX_PAGES = 100  # Safety limit for pagination
 
-@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
+
+def list_all_product_basic_metadata(
+    ctx: Optional[Context] = None,
+) -> Optional[dict]:
+    """
+    Get metadata for all available products. This can be used for product discovery and to inform dynamic behavior based on product availability, and can serve as a basis for more specific product searches.
+    Each product's metadata includes its name, ID and list of payloads. The list of payloads can be used as a reference point for user queries that may specify a table name or keywords.
+
+    Returns:
+        dict: The metadata for all available products. There is no pagination for this endpoint, so it returns all products in a single response.
+    
+    """
+    headers = get_auth_headers(ctx)
+    try:
+        response = requests.get(
+            f"{PRODUCT_CARDS_API_BASE_URL}",
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.error("Failed to retrieve product metadata: %s", exc)
+        return [{"error": f"Failed to retrieve product metadata: {exc}"}]
+    if response.status_code == 200:
+        return response.json()
+    else:
+        logger.error(f"Failed to retrieve product metadata: {response.status_code}")
+        return [{"error": f"Failed to retrieve product metadata: {response.status_code} {response.text}"}]
+
+def get_product_card(
+    product_id: Optional[str],
+    ctx: Optional[Context] = None,
+) -> Optional[dict]:
+    """
+    Get detailed metadata for a specific product.
+
+    Call this after search_products to get rich context before creating a subscription
+    or explaining a product to the user. The response tells you what OAuth connection
+    is required, what fields are needed for subscription creation, and how the product's
+    data pipeline is structured.
+
+    Key response fields:
+      - id, name, worker_name: Basic product identifiers.
+      - remote_identity_type_id / remote_identity_type_name: The OAuth connection type
+        required (e.g. "Amazon Seller Central"). Use this to determine which remote
+        identity the user must connect before creating a subscription.
+        (e.g. ["remote_identity_id"]). Always check this before attempting to create a
+        subscription.
+      - stages: Pipeline processing stages. Each stage has a name, stage_id, and
+        request_type — "primary" for live/incremental data, "history" for backfill.
+      - history_info: Historical data configuration. "days" is how far back data is
+        available; "stage_id" identifies the history stage to use for backfill jobs.
+      - backend_info: Scheduling details — job_type (e.g. "hourly"), base_schedule_start
+        (cron expression), and days_list (days of week the job runs).
+
+    Example response:
+        {
+          "id": 98,
+          "name": "Orders v2",
+          "worker_name": "sp_orders2",
+          "active": 1,
+          "remote_identity_type_id": 17,
+          "remote_identity_type_name": "Amazon Seller Central",
+          "stages": [
+            {"name": "sp_orders2", "request_type": "primary", "stage_id": 1000},
+            {"name": "sp_orders2_by_creation_date", "request_type": "history", "stage_id": 1001}
+          ],
+          "history_info": [{"days": 30, "stage_id": 1001, ...}],
+          "backend_info": [{"job_type": "hourly", "base_schedule_start": "0 * * * *", ...}],
+          "subscription_info": {"spm_requirements": ["remote_identity_id"]}
+        }
+
+    Example workflow 1 - product discovery:
+        get_product_lookup() → find product ID for "Amazon Ads Sponsored Brands"
+        get_product_card(product_id) → see it requires "Amazon Seller Central" OAuth connection + spm_requirements
+    Example workflow 2 - product search:
+        search_products(query) → get product ID
+        get_product_card(product_id) → confirm remote identity type + spm_requirements
+
+    Args:
+        product_id: The product ID (from search_products).
+
+    Returns:
+        dict: Product card metadata, or {"error": "..."} if the request fails.
+    """
+    headers = get_auth_headers(ctx)
+    try:
+        response = requests.get(
+            f"{PRODUCT_CARDS_API_BASE_URL}/{product_id}",
+            headers=headers,
+            timeout=get_api_timeout(),
+        )
+    except requests.RequestException as exc:
+        logger.warning("Failed to retrieve product card for %s: %s", product_id, exc)
+        return {"error": f"Failed to retrieve product card: {exc}"}
+    if response.status_code == 200:
+        return response.json()
+    else:
+        logger.warning(f"Failed to retrieve product card for {product_id}: {response.status_code}")
+        return {"error": f"Failed to retrieve product card: {response.status_code} {response.text}"}
+
 def get_product_stage_ids(
     product_id: Optional[StrictInt],
     ctx: Optional[Context] = None,

@@ -267,6 +267,8 @@ def create_mcp_server() -> FastMCP:
     register_tool("get_product_stage_ids", products_tools.get_product_stage_ids)
     register_tool("search_products", products_tools.search_products)
     register_tool("list_product_tables", products_tools.list_product_tables)
+    register_tool("get_product_card", products_tools.get_product_card)
+    register_tool("list_all_product_basic_metadata", products_tools.list_all_product_basic_metadata)
 
     # Health check endpoint for monitoring and load balancers
     @mcp.custom_route("/health", methods=["GET"])
