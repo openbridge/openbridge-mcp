@@ -168,11 +168,20 @@ Once deployed, the Openbridge MCP can be utilized by any LLM with MCP support. B
 
 For more information about getting connected with Claude Desktop, visit the [**modelcontextprotocol** official documentation](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
-### Tools exposed
-By default (`CODE_MODE=true`), FastMCP Code Mode is active and clients typically see meta-tools like `search`, `get_schema`/`get_schemas`, and `execute` (plus `tags` when enabled).  
-Set `CODE_MODE=false` to opt out and expose the direct tool catalog documented below.
+### Skills (resources)
+The server auto-loads the repo-bundled skill at `skills/openbridge-mcp/`. Clients can discover it through the MCP **resource** API — not tools or prompts.
 
-See [docs/tool-coverage-matrix.md](docs/tool-coverage-matrix.md) for endpoint-family coverage status and planned phases.
+Available URIs:
+- `skill://openbridge-mcp/SKILL.md` — main instruction file with usage workflows
+- `skill://openbridge-mcp/_manifest` — JSON listing every file in the skill bundle
+- `skill://openbridge-mcp/references/<workflows|code-mode|error-envelope|embed-cli|tools-catalog>.md`
+- `skill://openbridge-mcp/evals/evals.json` — eval fixtures
+
+The provider uses `supporting_files="resources"` so reference docs and eval JSON are individually addressable. Reload is off; skills snapshot at image build time. See [AGENTS.md §Skills](AGENTS.md#skills) for the full directory contract and how to add new skills.
+
+### Tools exposed
+By default (`CODE_MODE=true`), Code Mode is active and clients typically see meta-tools like `search`, `get_schema`/`get_schemas`, and `execute` (plus `tags` when enabled).  
+Set `CODE_MODE=false` to opt out and expose the direct tool catalog documented below.
 
 - Capabilities
   - `get_capabilities`

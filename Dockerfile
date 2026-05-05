@@ -29,6 +29,12 @@ COPY pyproject.toml uv.lock README.md /app/
 COPY main.py /app/main.py
 COPY src/ /app/src/
 COPY schemas/ /app/schemas/
+# Bundle the repo-authored skill so FastMCP's SkillsDirectoryProvider
+# (registered in src/server/mcp_server.py) can discover it at runtime.
+# `_resolve_skills_root()` looks for `<repo-root>/skills/`, which inside
+# the container is `/app/skills/` once this COPY lands. Without this
+# line the provider boots gracefully but exposes no skill resources.
+COPY skills/ /app/skills/
 
 # Install project dependencies and the local package.
 RUN python -m pip install --upgrade pip \

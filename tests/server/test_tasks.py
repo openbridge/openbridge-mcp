@@ -94,8 +94,12 @@ def test_server_constructed_with_tasks_enabled(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-# get_capabilities is a pure local read — leave it sync.
-TOOLS_EXEMPT_FROM_TASKS = {"get_capabilities"}
+# Pure local-read tools — registered with task=None so they don't go
+# through the Docket queue. ``get_capabilities`` is the historical
+# example; ``list_skills`` / ``read_skill`` were added in v0.3.4 and
+# are similarly in-process (they call ctx.fastmcp.list_resources() /
+# read_resource() directly, no HTTP).
+TOOLS_EXEMPT_FROM_TASKS = {"get_capabilities", "list_skills", "read_skill"}
 
 
 def test_every_api_tool_supports_optional_task_execution(monkeypatch):

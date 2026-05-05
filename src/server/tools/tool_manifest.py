@@ -6,6 +6,14 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
         "category": "meta",
         "description": "Return current tool availability, required environment variables, and LLM opt-in behavior.",
     },
+    "list_skills": {
+        "category": "meta",
+        "description": "Enumerate skill resources published by this server (workaround for tool-only MCP hosts that do not surface the resource channel).",
+    },
+    "read_skill": {
+        "category": "meta",
+        "description": "Read the body of a skill resource by URI as returned by list_skills().",
+    },
     "get_remote_identities": {
         "category": "remote_identity",
         "description": "Retrieve remote identities for the current user. Returns list of remote identity names.",
