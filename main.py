@@ -3,8 +3,10 @@
 import os
 import sys
 
+import uvicorn
 from dotenv import load_dotenv
 
+from src.auth.path_token_middleware import PathTokenMiddleware, load_secret
 from src.server.mcp_server import create_mcp_server
 from src.utils.logging import get_logger
 
@@ -46,16 +48,15 @@ def main():
 
         # Create and run MCP server
         server = create_mcp_server()
+        secret = load_secret()
         logger.info(
             "Starting MCP server with HTTP transport (stateless_http=%s)",
             stateless_http,
         )
-        server.run(
-            transport="http",
-            host=MCP_HOST,
-            port=MCP_PORT,
-            stateless_http=stateless_http,
-        )
+        # Wrap the FastMCP ASGI app at the outermost level so PathTokenMiddleware intercepts before Starlette routing.
+        mcp_app = server.http_app(stateless_http=stateless_http)
+        app = PathTokenMiddleware(mcp_app, secret=secret)
+        uvicorn.run(app, host=MCP_HOST, port=MCP_PORT, lifespan="on")
 
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
