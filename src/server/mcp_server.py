@@ -3,9 +3,11 @@ import functools
 import inspect
 import os
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from fastmcp import FastMCP
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
 from fastmcp.server.tasks import TaskConfig
 from starlette.responses import JSONResponse
 
@@ -16,6 +18,7 @@ from src.server.tools import jobs as jobs_tools  # noqa: E402
 from src.server.tools import products as products_tools  # noqa: E402
 from src.server.tools import subscriptions as subscriptions_tools  # noqa: E402
 from src.server.tools import capabilities as capabilities_tools  # noqa: E402
+from src.server.tools import skills_meta as skills_meta_tools  # noqa: E402
 from src.server.tools.tool_manifest import TOOL_MANIFEST  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
 from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
@@ -27,6 +30,28 @@ from src.server.sampling import create_sampling_handler  # noqa: E402
 
 
 logger = get_logger("mcp_server")
+
+
+def _resolve_skills_root() -> Optional[Path]:
+    """Return the repo-bundled ``skills/`` path, or ``None`` if missing.
+
+    Resolves relative to this file so the path works in both
+    environments we ship into:
+
+    - **Source tree:** ``<repo>/src/server/mcp_server.py`` →
+      ``<repo>/skills/``
+    - **Docker container:** ``/app/src/server/mcp_server.py`` →
+      ``/app/skills/`` (populated by ``COPY skills/ /app/skills/`` in
+      the Dockerfile).
+
+    Returns ``None`` when the directory is absent so callers can skip
+    registration without crashing the server. This matters for stripped
+    installs and for the dedicated regression test
+    ``test_provider_resilient_to_missing_dir`` which monkeypatches this
+    helper to ``None``.
+    """
+    candidate = Path(__file__).resolve().parents[2] / "skills"
+    return candidate if candidate.is_dir() else None
 
 
 def _get_service_version() -> str:
@@ -151,6 +176,25 @@ def create_mcp_server() -> FastMCP:
             mcp.add_middleware(mw)
         logger.info("Auth mode: refresh_token (Bearer/exchange middleware)")
 
+    # Skills provider — registered once after the auth-mode branches
+    # converge so both ``oauth_proxy`` and ``refresh_token`` auth modes
+    # get the same skills surface without code duplication or drift.
+    # ``supporting_files="resources"`` is non-default and intentional:
+    # FastMCP's default (``"template"``) only exposes ``SKILL.md`` and
+    # the synthetic ``_manifest`` resource. ``"resources"`` is what
+    # makes ``references/*.md`` and ``evals/evals.json`` discoverable
+    # to MCP clients and populates the manifest's file list.
+    skills_root = _resolve_skills_root()
+    if skills_root is not None:
+        mcp.add_provider(SkillsDirectoryProvider(
+            roots=skills_root,
+            supporting_files="resources",
+            reload=False,
+        ))
+        logger.info("Loaded skills provider from %s", skills_root)
+    else:
+        logger.info("No skills/ directory found; skills provider not registered")
+
     registered_tool_names = set()
 
     # Default policy: every Openbridge-API tool can be slow (network
@@ -178,6 +222,13 @@ def create_mcp_server() -> FastMCP:
         lambda: capabilities_tools.build_capabilities(registered_tool_names),
         task=None,
     )
+    # Skills meta-tools — bridge the MCP resource channel into the tool
+    # channel for tool-only hosts (e.g. Claude.ai's MCP host as of
+    # 2026-05-01). Calls go through ctx.fastmcp.list_resources() /
+    # read_resource() in-process, so they're cheap and don't need
+    # background-task framing.
+    register_tool("list_skills", skills_meta_tools.list_skills, task=None)
+    register_tool("read_skill", skills_meta_tools.read_skill, task=None)
     # Remote identity tools
     register_tool("get_remote_identities", remote_identity_tools.get_remote_identities)
     register_tool("get_remote_identity_by_id", remote_identity_tools.get_remote_identity_by_id)
@@ -216,6 +267,8 @@ def create_mcp_server() -> FastMCP:
     register_tool("get_product_stage_ids", products_tools.get_product_stage_ids)
     register_tool("search_products", products_tools.search_products)
     register_tool("list_product_tables", products_tools.list_product_tables)
+    register_tool("get_product_card", products_tools.get_product_card)
+    register_tool("list_all_product_basic_metadata", products_tools.list_all_product_basic_metadata)
 
     # Health check endpoint for monitoring and load balancers
     @mcp.custom_route("/health", methods=["GET"])

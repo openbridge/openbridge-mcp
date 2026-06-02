@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.4 - 2026-05-01
+
+- Add `list_skills` and `read_skill` meta-tools that bridge the FastMCP resource channel into the tool channel. The bundled skill at `skills/openbridge-mcp/` is published as MCP resources per the FastMCP spec, but tool-only MCP hosts (verified: Claude.ai's MCP host as of 2026-05-01) don't surface the resource channel to the assistant. The two new tools wrap `ctx.fastmcp.list_resources()` / `ctx.fastmcp.read_resource()` so the assistant can `call_tool("list_skills", {})` / `call_tool("read_skill", {"uri": "skill://openbridge-mcp/SKILL.md"})` and get the same content. Both are registered with `task=None` (in-process, no I/O cost). Errors return v1 envelopes (`INVALID_SKILL_URI`, `SKILL_NOT_FOUND`, `MISSING_CONTEXT`).
+- Hosts that natively surface MCP resources (Claude Code, Inspector, FastMCP `Client` SDK) should keep using `list_resources()` / `read_resource()` — these wrappers exist solely to paper over a tool-only host limitation.
+
+## 0.3.3 - 2026-05-01
+
+- Fix: filter macOS AppleDouble sidecar files (`._SKILL.md`, `._evals`, `._mcp-servers.json`, `._references`, `._scripts`, plus same patterns in subdirectories) and `.DS_Store` out of the Docker build context via `.dockerignore`. These were leaking into the image because the deploy tarball is built on macOS, and FastMCP's `SkillsDirectoryProvider` was exposing them as supporting resources alongside the real skill files. Live probe of v0.3.2 showed 20 skill resources where there should have been 8.
+
+## 0.3.2 - 2026-05-01
+
+- Load the repo-bundled `skills/openbridge-mcp/` skill into the MCP server via FastMCP's `SkillsDirectoryProvider`. Connected clients can now discover the skill via `list_resources()` (URIs `skill://openbridge-mcp/SKILL.md`, `skill://openbridge-mcp/_manifest`, plus per-reference-doc URIs like `skill://openbridge-mcp/references/workflows.md`). The provider is wired with `supporting_files="resources"` (non-default) so all five reference docs and the evals JSON show up alongside the main `SKILL.md`. Reload is off — skills snapshot at image build time; redeploy to update.
+- Added `COPY skills/ /app/skills/` to the Dockerfile so the directory is present in the running container. Without it the provider boots gracefully but exposes no skill resources.
+- The provider registration is graceful: if `skills/` is absent (stripped install, alternate deploy), `create_mcp_server()` logs a single info line and skips registration without raising.
+
 ## 0.3.1 - 2026-05-01
 
 - Fix: `get_suggested_table_names` now normalizes free-form queries before hitting the rules API substring filter. Live repro: `query="SP Campaign"` (mixed case + space) substring-missed every catalog entry and fell through to the no-match envelope, even though `"sp_campaign"` would have hit `amzn_ads_sp_campaigns` cleanly. Normalization rules: lowercase, collapse non-alphanumerics to a single underscore, strip leading/trailing underscores. The caller's original `query` is echoed back unchanged in the response.

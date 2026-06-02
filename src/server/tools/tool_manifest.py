@@ -6,6 +6,14 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
         "category": "meta",
         "description": "Return current tool availability, required environment variables, and LLM opt-in behavior.",
     },
+    "list_skills": {
+        "category": "meta",
+        "description": "Enumerate skill resources published by this server (workaround for tool-only MCP hosts that do not surface the resource channel).",
+    },
+    "read_skill": {
+        "category": "meta",
+        "description": "Read the body of a skill resource by URI as returned by list_skills().",
+    },
     "get_remote_identities": {
         "category": "remote_identity",
         "description": "Retrieve remote identities for the current user. Returns list of remote identity names.",
@@ -97,6 +105,14 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
     "list_product_tables": {
         "category": "products",
         "description": "List all tables (data payloads) available for a specific product.",
+    },
+    "get_product_card": {
+        "category": "products",
+        "description": "Get detailed metadata for a product: required remote identity type, subscription requirements, pipeline stages, and scheduling info.",
+    },
+    "list_all_product_basic_metadata": {
+        "category": "products",
+        "description": "Get metadata for all available Openbridge products. Use for product discovery when the specific product name is unknown.",
     },
 }
 
