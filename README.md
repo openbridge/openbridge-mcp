@@ -1,6 +1,119 @@
 # Openbridge MCP Server
 
-The *Openbridge MCP Server* is a MCP server which enables LLMs to perform various tasks within the Openbridge platform. 
+The *Openbridge MCP Server* is a MCP server which enables LLMs to perform various tasks within the Openbridge platform.
+
+## Quickstart
+
+Get running in 3 steps: create a `.env`, start Docker, connect your AI client.
+
+### 1. Create your `.env`
+
+Copy the example and fill in your Openbridge refresh token (format: `account_id:token`). You can generate one from the [Openbridge console](https://app.openbridge.com).
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set these two values at minimum:
+
+```bash
+MCP_PORT=8000
+OPENBRIDGE_REFRESH_TOKEN=<your_account_id>:<your_token>
+```
+
+For local single-tenant use, also add:
+
+```bash
+OPENBRIDGE_REQUIRE_CLIENT_AUTH=false
+```
+
+### 2. Start the server with Docker
+
+For **local development** (no TLS, no Caddy — just the MCP server and Redis):
+
+```bash
+docker compose up --build -d redis
+docker compose run -d -p 8000:8000 --name openbridge-mcp openbridge-mcp
+```
+
+Verify it's running:
+
+```bash
+docker compose logs -f openbridge-mcp
+# Wait for "FastMCP server listening"
+```
+
+Your MCP endpoint is now at: `http://localhost:8000/mcp`
+
+### 3. Connect your AI client
+
+#### Claude Code (CLI)
+
+```bash
+claude mcp add --transport http openbridge http://localhost:8000/mcp
+```
+
+That's it — Claude Code will discover tools automatically on next launch.
+
+#### Claude Desktop
+
+Add this to your Claude Desktop config file:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "openbridge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--allow-http",
+        "mcp-remote@latest",
+        "http://localhost:8000/mcp"
+      ]
+    }
+  }
+}
+```
+
+> If your server requires client-side auth (`OPENBRIDGE_REQUIRE_CLIENT_AUTH=true`), pass a Bearer token:
+> ```json
+> {
+>   "mcpServers": {
+>     "openbridge": {
+>       "command": "npx",
+>       "args": [
+>         "-y",
+>         "--allow-http",
+>         "mcp-remote@latest",
+>         "http://localhost:8000/mcp",
+>         "--header",
+>         "Authorization:${AUTH_HEADER}"
+>       ],
+>       "env": {
+>         "AUTH_HEADER": "Bearer <your_account_id>:<your_token>"
+>       }
+>     }
+>   }
+> }
+> ```
+
+#### Cursor / Windsurf / other MCP clients
+
+Most MCP-compatible editors accept either:
+- **HTTP URL:** `http://localhost:8000/mcp` (if the client supports HTTP transport)
+- **npx bridge:** Same `npx mcp-remote@latest http://localhost:8000/mcp` pattern as Claude Desktop above
+
+#### Remote deployment
+
+For a remote server with TLS (e.g., behind Cloudflare or Caddy), replace `http://localhost:8000/mcp` with your public URL:
+
+```
+https://mcp.yourdomain.com/mcp
+```
+
+---
 
 ## Deployment
 Detailed below are setup and configuration instructions for a local machine, but the same steps can be taken to deploy the MCP on a remote server hosted on [AWS Fargate/EC2](https://aws.amazon.com/fargate), [Google Cloud Plaform (GCP)](https://cloud.google.com/blog/topics/developers-practitioners/build-and-deploy-a-remote-mcp-server-to-google-cloud-run-in-under-10-minutes), or any other remote server technology that best fits your environment.
