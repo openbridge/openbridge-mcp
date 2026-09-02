@@ -248,6 +248,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Without this, query validation tools are not registered
   - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `true`): Controls `execute_query` registration independently
     - When `false`, `validate_query` remains available but `execute_query` is not registered
+  - SQL validation calls the OpenAI Responses API directly because FastMCP 4 removed server-initiated context sampling
   - `FASTMCP_SAMPLING_MODEL` (optional, default `gpt-4o-mini`): OpenAI model for query validation
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Opt-in to send SQL to LLM
@@ -481,9 +482,11 @@ Before approving, ask:
 
 ## FastMCP Compatibility
 
-- The repo currently uses `fastmcp>=3.1.0` (see `pyproject.toml`)
+- The repo requires `fastmcp>=4,<5` with the `code-mode` and `tasks` extras (see `pyproject.toml`)
+- Background tasks use `fastmcp_tasks.TasksExtension` and `fastmcp.utilities.tasks.TaskConfig`
+- FastMCP 4 removed server-side `ctx.sample()`; query validation calls the OpenAI Responses API directly
 - Context state API: Native `ctx.set_state()` and `ctx.get_state()` available
-- Compatibility shim in `src/auth/authentication.py:19-31` handles older FastMCP releases gracefully
+- Authentication errors use `fastmcp.exceptions.McpError`
 - If you upgrade FastMCP, update this section and verify middleware, context state, and tool contracts still work
 
 ## Security Considerations
@@ -492,7 +495,7 @@ Before approving, ask:
 - Validate all external inputs (see `src/utils/security.py`)
 - Use `safe_pagination_url()` for untrusted pagination links (prevents SSRF)
 - Client JWTs are passed through by middleware; token signature and authorization checks are enforced by downstream Openbridge APIs
-- Query validation tools prevent SQL injection via LLM sampling + heuristics
+- Query validation tools prevent SQL injection via direct LLM validation + heuristics
 - Set `OPENBRIDGE_ENABLE_LLM_VALIDATION=false` if SQL must not leave your environment
 
 ## Common Workflows

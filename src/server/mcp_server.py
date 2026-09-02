@@ -8,7 +8,8 @@ from typing import Any, Callable, Optional
 
 from fastmcp import FastMCP
 from fastmcp.server.providers.skills import SkillsDirectoryProvider
-from fastmcp.server.tasks import TaskConfig
+from fastmcp.utilities.tasks import TaskConfig
+from fastmcp_tasks import TasksExtension
 from starlette.responses import JSONResponse
 
 from src.server.tools import remote_identity as remote_identity_tools  # noqa: E402
@@ -26,7 +27,6 @@ from src.auth.manager import get_auth_manager  # noqa: E402
 from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy  # noqa: E402
 from src.server.code_mode import create_code_mode_transform, is_code_mode_enabled  # noqa: E402
 from src.server.error_envelope_middleware import ErrorEnvelopeMiddleware  # noqa: E402
-from src.server.sampling import create_sampling_handler  # noqa: E402
 
 
 logger = get_logger("mcp_server")
@@ -140,13 +140,10 @@ def _async_wrap(sync_func: Callable[..., Any]) -> Callable[..., Any]:
 def create_mcp_server() -> FastMCP:
     """Create and configure the MCP server."""
     auth_cfg = create_openbridge_config()
-    sampling_handler = create_sampling_handler()
 
     _MCP_KWARGS = dict(
         name="Openbridge MCP",
         instructions="Openbridge MCP server for utilizing a variety of API endpoints and tools.",
-        sampling_handler=sampling_handler,
-        tasks=True,
     )
 
     if auth_cfg.auth_mode == "oauth_proxy":
@@ -175,6 +172,9 @@ def create_mcp_server() -> FastMCP:
         for mw in middleware:
             mcp.add_middleware(mw)
         logger.info("Auth mode: refresh_token (Bearer/exchange middleware)")
+
+    # FastMCP 4 moved background tasks into an explicit extension.
+    mcp.add_extension(TasksExtension())
 
     # Skills provider — registered once after the auth-mode branches
     # converge so both ``oauth_proxy`` and ``refresh_token`` auth modes

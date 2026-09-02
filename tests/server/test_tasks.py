@@ -2,8 +2,8 @@
 
 What this file locks in:
 
-1. ``create_mcp_server`` constructs ``FastMCP(... tasks=True ...)`` so
-   the protocol-level task surface is always advertised.
+1. ``create_mcp_server`` installs FastMCP 4's ``TasksExtension`` so the
+   protocol-level task surface is always advertised.
 2. Every tool in the manifest *except* ``get_capabilities`` is registered
    with ``task=TaskConfig(mode="optional")``. Clients can choose between
    sync and background execution per call.
@@ -30,8 +30,6 @@ import asyncio
 import inspect
 
 import pytest
-
-from fastmcp.server.tasks import TaskConfig
 
 from src.server import mcp_server
 from src.server.tools.tool_manifest import TOOL_MANIFEST
@@ -70,23 +68,20 @@ def _build_server(monkeypatch, *, api_key: bool = True) -> FakeFastMCP:
         "create_auth_middleware",
         lambda config, *, jwt_middleware, auth_manager: [],
     )
-    monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: object())
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
     return mcp_server.create_mcp_server()
 
 
 # ---------------------------------------------------------------------------
-# Server-level: tasks=True is always wired
+# Server-level: TasksExtension is always wired
 # ---------------------------------------------------------------------------
 
 
-def test_server_constructed_with_tasks_enabled(monkeypatch):
-    """FastMCP must be constructed with tasks=True so SEP-1686 task
-    augmentation is advertised in capabilities, regardless of whether
-    individual tools opt in.
-    """
+def test_server_constructed_with_tasks_extension(monkeypatch):
+    """FastMCP must install TasksExtension for SEP-1686 support."""
     server = _build_server(monkeypatch)
-    assert server.tasks_enabled is True
+    assert len(server.extensions) == 1
+    assert isinstance(server.extensions[0], mcp_server.TasksExtension)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +110,7 @@ def test_every_api_tool_supports_optional_task_execution(monkeypatch):
                 f"{name!r} should not be a background task but got {task!r}"
             )
             continue
-        assert isinstance(task, TaskConfig), (
+        assert isinstance(task, mcp_server.TaskConfig), (
             f"Tool {name!r} should advertise background-task support; "
             f"got task={task!r}"
         )
@@ -135,7 +130,7 @@ def test_task_coverage_matches_manifest(monkeypatch):
     actually_taskable = {
         name
         for name, entry in server.registered_tools.items()
-        if isinstance(entry["task"], TaskConfig)
+        if isinstance(entry["task"], mcp_server.TaskConfig)
     }
     # The server may skip tools when no API key is configured, so
     # actually_taskable is a subset, not equal.

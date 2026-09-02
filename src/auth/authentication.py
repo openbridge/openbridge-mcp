@@ -11,8 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import jwt as pyjwt
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from mcp import McpError
-from mcp.types import ErrorData
+from fastmcp.exceptions import McpError
 
 from .session_state import set_request_jwt
 from .simple import AuthenticationError, OpenbridgeAuth, get_auth, is_refresh_token
@@ -185,14 +184,12 @@ class OpenbridgeAuthMiddleware(Middleware):
             except AuthenticationError as exc:
                 logger.warning("Client token exchange failed: %s", exc)
                 raise McpError(
-                    ErrorData(
-                        code=AUTH_ERROR_CODE,
-                        message=(
-                            "Client-provided Openbridge token could not be exchanged for a JWT. "
-                            "Verify the Authorization: Bearer header carries a valid refresh token "
-                            "(format: xxx:yyy) or an unexpired JWT."
-                        ),
-                    )
+                    code=AUTH_ERROR_CODE,
+                    message=(
+                        "Client-provided Openbridge token could not be exchanged for a JWT. "
+                        "Verify the Authorization: Bearer header carries a valid refresh token "
+                        "(format: xxx:yyy) or an unexpired JWT."
+                    ),
                 ) from exc
 
         # Multi-tenant fail-closed: when require_client_auth is on and we
@@ -210,14 +207,12 @@ class OpenbridgeAuthMiddleware(Middleware):
                 "Rejecting request: OPENBRIDGE_REQUIRE_CLIENT_AUTH=true and no Bearer token present"
             )
             raise McpError(
-                ErrorData(
-                    code=AUTH_ERROR_CODE,
-                    message=(
-                        "This server requires a per-tenant Authorization: Bearer "
-                        "credential. Server-token fallback is disabled because "
-                        "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled."
-                    ),
-                )
+                code=AUTH_ERROR_CODE,
+                message=(
+                    "This server requires a per-tenant Authorization: Bearer "
+                    "credential. Server-token fallback is disabled because "
+                    "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled."
+                ),
             )
 
         # Priority 2: Fall back to server's refresh token only when there

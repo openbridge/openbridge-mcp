@@ -8,7 +8,8 @@ FROM python:3.14-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/app/.venv/bin:$PATH"
 
 # Run the application from a dedicated working directory.
 WORKDIR /app
@@ -36,9 +37,9 @@ COPY schemas/ /app/schemas/
 # line the provider boots gracefully but exposes no skill resources.
 COPY skills/ /app/skills/
 
-# Install project dependencies and the local package.
-RUN python -m pip install --upgrade pip \
-    && python -m pip install .
+# Install the exact production dependency set captured in uv.lock.
+RUN python -m pip install uv==0.12.5 \
+    && uv sync --frozen --no-dev --no-editable
 
 # Drop root privileges for runtime security.
 RUN useradd --create-home --uid 10001 appuser \

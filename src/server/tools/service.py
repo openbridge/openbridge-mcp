@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 import requests
 from fastmcp.server.context import Context
 
+from src.server.sampling import sample_text
+from src.utils.envelope import auth_error, make_error, not_found
+from src.utils.logging import get_logger
 from src.utils.table_resolver import (
     find_matching_rule,
     levenshtein_similarity,
@@ -14,8 +17,6 @@ from src.utils.table_resolver import (
     parse_rule_item,
     rank_suggestions,
 )
-from src.utils.envelope import auth_error, make_error, not_found
-from src.utils.logging import get_logger
 from .base import get_api_timeout, get_auth_headers
 from .remote_identity import get_remote_identity_by_id
 
@@ -239,22 +240,22 @@ async def validate_query(
     allow_unbounded: bool = False,
     ctx: Optional[Context] = None,
 ) -> Dict[str, Any]:
-    """Use sampling to assess query safety before execution.
+    """Use heuristics and optional OpenAI validation to assess query safety.
 
     Args:
         query: Fully formed SQL query the caller intends to run.
         key_name: Storage/account mapping key the query targets.
-        ctx: FastMCP context providing sampling capabilities.
+        ctx: FastMCP request context.
 
     Returns:
         Dict[str, Any]: Structured assessment including heuristic findings,
-        sampling feedback, and a recommended allow/deny decision.
+        model feedback, and a recommended allow/deny decision.
     """
 
     if ctx is None:
         raise ValueError("Context is required for validate_query")
 
-    # Check for either API key, matching sampling handler behavior
+    # Accept the legacy FastMCP-named key or the standard OpenAI key.
     api_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("Sampling API key required: set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY")
@@ -312,13 +313,12 @@ async def validate_query(
         )
 
         try:
-            response = await ctx.sample(
-                messages=[user_prompt],
+            raw_text = await sample_text(
+                user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 temperature=0,
                 max_tokens=400,
             )
-            raw_text = response.text.strip()
             sampling_feedback["raw"] = raw_text
             try:
                 parsed = json.loads(raw_text)

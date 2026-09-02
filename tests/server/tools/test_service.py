@@ -12,57 +12,52 @@ def test_validate_query_requires_context():
 
 
 def test_validate_query_requires_openai_key(monkeypatch):
-    class DummyContext:
-        async def sample(self, **kwargs):
-            return SimpleNamespace(text="{}")
-
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
 
     with pytest.raises(ValueError):
-        asyncio.run(service.validate_query("select 1 limit 1", key_name="acc", ctx=DummyContext()))
+        asyncio.run(service.validate_query("select 1 limit 1", key_name="acc", ctx=object()))
 
 
 def test_validate_query_allows_read_only_query(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "true")
 
-    class DummyContext:
-        def __init__(self):
-            self.calls = []
+    calls = []
 
-        async def sample(self, **kwargs):
-            self.calls.append(kwargs)
-            return SimpleNamespace(text='{"allow": true, "read_only": true}')
+    async def fake_sample_text(**kwargs):
+        calls.append(kwargs)
+        return '{"allow": true, "read_only": true}'
 
-    ctx = DummyContext()
+    monkeypatch.setattr(service, "sample_text", fake_sample_text, raising=False)
     result = asyncio.run(
         service.validate_query(
             "SELECT * FROM example LIMIT 5",
             key_name="acc",
-            ctx=ctx,
+            ctx=object(),
         )
     )
 
     assert result["decision"]["allowed"] is True
     assert result["heuristics"]["has_limit"] is True
     assert result["sampling"]["details"]["allow"] is True
-    assert ctx.calls, "expected sampling to be invoked"
+    assert calls, "expected the direct OpenAI client to be invoked"
 
 
 def test_validate_query_denies_query_without_limit(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "true")
 
-    class DummyContext:
-        async def sample(self, **kwargs):
-            return SimpleNamespace(text='{"allow": true, "read_only": true}')
+    async def fake_sample_text(**kwargs):
+        return '{"allow": true, "read_only": true}'
+
+    monkeypatch.setattr(service, "sample_text", fake_sample_text, raising=False)
 
     result = asyncio.run(
         service.validate_query(
             "SELECT id FROM dataset",
             key_name="acc",
-            ctx=DummyContext(),
+            ctx=object(),
         )
     )
 
