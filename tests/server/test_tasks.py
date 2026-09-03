@@ -169,6 +169,18 @@ def test_production_compose_requires_task_snapshot_encryption():
     ) in compose
 
 
+def test_examples_do_not_ship_a_reusable_task_encryption_key():
+    """Copied example env files must fail until a unique key is generated."""
+    repository_root = Path(__file__).resolve().parents[2]
+    env_example = (repository_root / ".env.example").read_text()
+    readme = (repository_root / "README.md").read_text()
+
+    assert "FASTMCP_TASKS_ENCRYPTION_KEY=\n" in env_example
+    assert "FASTMCP_TASKS_ENCRYPTION_KEY=your-32-byte-hex-secret-here" not in (
+        env_example + readme
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-tool: task=optional is the default for Openbridge-API tools
 # ---------------------------------------------------------------------------

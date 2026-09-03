@@ -210,7 +210,7 @@ MCP_PORT=8000
 
 # Required for Docker Compose; encrypts task context persisted in Redis
 # Generate with: openssl rand -hex 32
-FASTMCP_TASKS_ENCRYPTION_KEY=your-32-byte-hex-secret-here
+FASTMCP_TASKS_ENCRYPTION_KEY=
 
 # Authentication — refresh_token mode (default)
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
