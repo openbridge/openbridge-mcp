@@ -15,7 +15,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from mcp import McpError
+from fastmcp.exceptions import McpError
 
 from src.auth.authentication import (
     AUTH_ERROR_CODE,

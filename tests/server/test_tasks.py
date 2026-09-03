@@ -1,9 +1,9 @@
-"""Tests for the SEP-1686 background-task wiring.
+"""Tests for the SEP-2663 background-task wiring.
 
 What this file locks in:
 
-1. ``create_mcp_server`` constructs ``FastMCP(... tasks=True ...)`` so
-   the protocol-level task surface is always advertised.
+1. ``create_mcp_server`` installs FastMCP 4's ``TasksExtension`` so the
+   protocol-level task surface is always advertised.
 2. Every tool in the manifest *except* ``get_capabilities`` is registered
    with ``task=TaskConfig(mode="optional")``. Clients can choose between
    sync and background execution per call.
@@ -27,13 +27,22 @@ assertions from the rest of the server-construction surface.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+from pathlib import Path
 
 import pytest
+import jwt as pyjwt
+from fastmcp import Client, Context, FastMCP
+from fastmcp.exceptions import McpError
+from fastmcp.utilities.tasks import TaskConfig
+from fastmcp_tasks import TasksExtension
+from fastmcp_tasks.client import call_tool_task
+from fastmcp_tasks.context import get_task_context
 
-from fastmcp.server.tasks import TaskConfig
-
+from src.auth.authentication import OpenbridgeAuthMiddleware
 from src.server import mcp_server
+from src.server.tools.base import get_auth_headers
 from src.server.tools.tool_manifest import TOOL_MANIFEST
 from tests.server.test_mcp_server import FakeAuthConfig, FakeFastMCP
 
@@ -70,23 +79,106 @@ def _build_server(monkeypatch, *, api_key: bool = True) -> FakeFastMCP:
         "create_auth_middleware",
         lambda config, *, jwt_middleware, auth_manager: [],
     )
-    monkeypatch.setattr(mcp_server, "create_sampling_handler", lambda: object())
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
     return mcp_server.create_mcp_server()
 
 
 # ---------------------------------------------------------------------------
-# Server-level: tasks=True is always wired
+# Server-level: TasksExtension is always wired
 # ---------------------------------------------------------------------------
 
 
-def test_server_constructed_with_tasks_enabled(monkeypatch):
-    """FastMCP must be constructed with tasks=True so SEP-1686 task
-    augmentation is advertised in capabilities, regardless of whether
-    individual tools opt in.
-    """
+def test_server_constructed_with_tasks_extension(monkeypatch):
+    """FastMCP must install TasksExtension for SEP-2663 support."""
     server = _build_server(monkeypatch)
-    assert server.tasks_enabled is True
+    assert len(server.extensions) == 1
+    assert isinstance(server.extensions[0], mcp_server.TasksExtension)
+
+
+@pytest.mark.asyncio
+async def test_background_task_restores_openbridge_auth_and_tenant_scope(monkeypatch):
+    """A real task worker must receive the submitting tenant's resolved JWT."""
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "true")
+    jwt_token = pyjwt.encode({"sub": "tenant-a"}, "a" * 32, algorithm="HS256")
+
+    class StaticAuth:
+        def get_jwt(self):
+            return jwt_token
+
+    server = FastMCP("task-auth-test")
+    server.add_extension(TasksExtension(url="memory://"))
+    server.add_middleware(OpenbridgeAuthMiddleware(StaticAuth()))
+
+    @server.tool(task=TaskConfig(mode="optional"))
+    async def observe_auth(ctx: Context) -> dict[str, str | None]:
+        task = get_task_context()
+        return {
+            "authorization": get_auth_headers(ctx).get("Authorization"),
+            "scope": task.task_scope if task else None,
+        }
+
+    async with Client(server) as client:
+        result = await client.call_tool("observe_auth", raise_on_error=False)
+
+    expected_scope = (
+        "openbridge-mcp|credential:"
+        f"{hashlib.sha256(jwt_token.encode()).hexdigest()}"
+    )
+    assert result.is_error is False, result.content
+    assert result.data == {
+        "authorization": f"Bearer {jwt_token}",
+        "scope": expected_scope,
+    }
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_are_isolated_by_tenant_scope(monkeypatch):
+    """A second tenant must not read a task submitted by the first tenant."""
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "true")
+    tenant_a = pyjwt.encode({"sub": "tenant-a"}, "a" * 32, algorithm="HS256")
+    tenant_b = pyjwt.encode({"sub": "tenant-b"}, "b" * 32, algorithm="HS256")
+    current_token = {"value": tenant_a}
+
+    class DynamicAuth:
+        def get_jwt(self):
+            return current_token["value"]
+
+    server = FastMCP("task-isolation-test")
+    server.add_extension(TasksExtension(url="memory://"))
+    server.add_middleware(OpenbridgeAuthMiddleware(DynamicAuth()))
+
+    @server.tool(task=TaskConfig(mode="optional"))
+    async def tenant_task() -> str:
+        return "complete"
+
+    async with Client(server) as client:
+        task = await call_tool_task(client, "tenant_task")
+        current_token["value"] = tenant_b
+        with pytest.raises(McpError, match="not found"):
+            await task.status()
+
+
+def test_production_compose_requires_task_snapshot_encryption():
+    """Persistent Redis task snapshots must have encryption configured."""
+    compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    compose = compose_path.read_text()
+
+    assert (
+        "FASTMCP_TASKS_ENCRYPTION_KEY: "
+        "${FASTMCP_TASKS_ENCRYPTION_KEY:?set FASTMCP_TASKS_ENCRYPTION_KEY in .env}"
+    ) in compose
+
+
+def test_examples_do_not_ship_a_reusable_task_encryption_key():
+    """Copied example env files must fail until a unique key is generated."""
+    repository_root = Path(__file__).resolve().parents[2]
+    env_example = (repository_root / ".env.example").read_text()
+    readme = (repository_root / "README.md").read_text()
+
+    assert "FASTMCP_TASKS_ENCRYPTION_KEY=\n" in env_example
+    assert "FASTMCP_TASKS_ENCRYPTION_KEY=your-32-byte-hex-secret-here" not in (
+        env_example + readme
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +207,7 @@ def test_every_api_tool_supports_optional_task_execution(monkeypatch):
                 f"{name!r} should not be a background task but got {task!r}"
             )
             continue
-        assert isinstance(task, TaskConfig), (
+        assert isinstance(task, mcp_server.TaskConfig), (
             f"Tool {name!r} should advertise background-task support; "
             f"got task={task!r}"
         )
@@ -135,7 +227,7 @@ def test_task_coverage_matches_manifest(monkeypatch):
     actually_taskable = {
         name
         for name, entry in server.registered_tools.items()
-        if isinstance(entry["task"], TaskConfig)
+        if isinstance(entry["task"], mcp_server.TaskConfig)
     }
     # The server may skip tools when no API key is configured, so
     # actually_taskable is a subset, not equal.

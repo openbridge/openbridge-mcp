@@ -33,7 +33,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp import McpError
+from fastmcp.exceptions import McpError
 
 import main
 from src.auth import session_state

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from inspect import isawaitable
@@ -9,10 +10,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 import jwt as pyjwt
+from fastmcp.server.auth import AccessToken
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from mcp import McpError
-from mcp.types import ErrorData
+from fastmcp.exceptions import McpError
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from .session_state import set_request_jwt
 from .simple import AuthenticationError, OpenbridgeAuth, get_auth, is_refresh_token
@@ -185,14 +188,12 @@ class OpenbridgeAuthMiddleware(Middleware):
             except AuthenticationError as exc:
                 logger.warning("Client token exchange failed: %s", exc)
                 raise McpError(
-                    ErrorData(
-                        code=AUTH_ERROR_CODE,
-                        message=(
-                            "Client-provided Openbridge token could not be exchanged for a JWT. "
-                            "Verify the Authorization: Bearer header carries a valid refresh token "
-                            "(format: xxx:yyy) or an unexpired JWT."
-                        ),
-                    )
+                    code=AUTH_ERROR_CODE,
+                    message=(
+                        "Client-provided Openbridge token could not be exchanged for a JWT. "
+                        "Verify the Authorization: Bearer header carries a valid refresh token "
+                        "(format: xxx:yyy) or an unexpired JWT."
+                    ),
                 ) from exc
 
         # Multi-tenant fail-closed: when require_client_auth is on and we
@@ -210,14 +211,12 @@ class OpenbridgeAuthMiddleware(Middleware):
                 "Rejecting request: OPENBRIDGE_REQUIRE_CLIENT_AUTH=true and no Bearer token present"
             )
             raise McpError(
-                ErrorData(
-                    code=AUTH_ERROR_CODE,
-                    message=(
-                        "This server requires a per-tenant Authorization: Bearer "
-                        "credential. Server-token fallback is disabled because "
-                        "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled."
-                    ),
-                )
+                code=AUTH_ERROR_CODE,
+                message=(
+                    "This server requires a per-tenant Authorization: Bearer "
+                    "credential. Server-token fallback is disabled because "
+                    "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled."
+                ),
             )
 
         # Priority 2: Fall back to server's refresh token only when there
@@ -238,10 +237,19 @@ class OpenbridgeAuthMiddleware(Middleware):
         if jwt_token:
             _log_jwt_identity(jwt_token)
             set_request_jwt(jwt_token)
+            _set_fastmcp_task_identity(
+                jwt_token,
+                credential=(
+                    client_token
+                    or os.getenv("OPENBRIDGE_REFRESH_TOKEN")
+                    or jwt_token
+                ),
+            )
             await _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
             await _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
         else:
             set_request_jwt(None)
+            auth_context_var.set(None)
 
         return await call_next(context)
 
@@ -275,6 +283,31 @@ def _safe_decode_claims(jwt_token: str) -> Dict[str, Any]:
         return pyjwt.decode(jwt_token, options={"verify_signature": False}) or {}
     except Exception:  # pragma: no cover - defensive
         return {}
+
+
+def _set_fastmcp_task_identity(jwt_token: str, *, credential: str) -> None:
+    """Bridge Openbridge auth into FastMCP's persisted task context.
+
+    FastMCP 4 snapshots its standard ``AccessToken`` for background workers.
+    Refresh-token mode authenticates in custom middleware, so it must populate
+    that standard context explicitly. The task scope uses a digest of the
+    submitted credential instead of unverified JWT claims, preventing a forged
+    ``sub`` claim from selecting another tenant's task namespace.
+    """
+    credential_digest = hashlib.sha256(credential.encode()).hexdigest()
+    subject = f"credential:{credential_digest}"
+    claims = {**_safe_decode_claims(jwt_token), "sub": subject}
+    raw_expiry = claims.get("exp")
+    expires_at = raw_expiry if isinstance(raw_expiry, int) else None
+    access_token = AccessToken(
+        token=jwt_token,
+        client_id="openbridge-mcp",
+        scopes=[],
+        expires_at=expires_at,
+        subject=subject,
+        claims=claims,
+    )
+    auth_context_var.set(AuthenticatedUser(access_token))
 
 
 def _log_jwt_identity(jwt_token: str) -> None:
