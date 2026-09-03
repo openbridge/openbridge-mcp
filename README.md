@@ -163,9 +163,10 @@ Required for server and tools to function. Values typically point to your enviro
   - `MCP_PORT` (default `8000`): Port for the HTTP MCP server. The container exposes `8000` internally; `docker-compose.yml` publishes it as `${MCP_PORT:-8000}` on the host, so set `MCP_PORT` in `.env` if you need a different host port.
   - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the MCP server.
   - `MCP_STATELESS_HTTP` (optional, default `true`): Run FastMCP's HTTP transport in stateless mode (a fresh transport per request). The default is safe for multi-instance deployments behind an L7 load balancer without sticky sessions. Set to `false` only if your deployment needs streamable HTTP session reuse and you can guarantee session affinity.
-- Background tasks (SEP-1686)
+- Background tasks (SEP-2663)
   - `FASTMCP_DOCKET_URL` (default in compose: `redis://redis:6379/0`): Docket backend URL. The bundled Redis sidecar is reachable only on the compose-internal network; the openbridge-mcp container resolves `redis` via Docker DNS and is the only ingress to Redis. Use `memory://` for a single-process dev run with no compose file (tasks won't survive restart).
   - `FASTMCP_DOCKET_CONCURRENCY` (optional, default `10`): Maximum number of concurrent background tasks per worker. Tune for your Openbridge HTTP capacity.
+  - `FASTMCP_TASKS_ENCRYPTION_KEY` (**required for Docker Compose**): Encrypts task context snapshots stored in Redis, including access tokens and HTTP headers. Generate a stable value with `openssl rand -hex 32`; every server and worker sharing the queue must use the same value.
 - Code mode (primary client entry point)
   - `CODE_MODE` (default `true`): Code mode is the **recommended** client entry point — clients see only `tags`/`search`/`get_schema`/`execute` and use Python in a sandbox to call individual Openbridge tools. Setting `CODE_MODE=false` falls back to the direct tool catalog (every tool exposed by name) and emits a startup WARNING; only do this if you have a specific compatibility need.
 - Logging
@@ -206,6 +207,10 @@ Example `.env` template (refresh_token mode — the default):
 # Server settings
 MCP_PORT=8000
 # MCP_HOST=0.0.0.0
+
+# Required for Docker Compose; encrypts task context persisted in Redis
+# Generate with: openssl rand -hex 32
+FASTMCP_TASKS_ENCRYPTION_KEY=your-32-byte-hex-secret-here
 
 # Authentication — refresh_token mode (default)
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy

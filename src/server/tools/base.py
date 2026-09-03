@@ -5,6 +5,8 @@ from inspect import isawaitable
 from typing import Dict, Optional
 from urllib.parse import urljoin, urlparse
 
+from fastmcp.server.dependencies import get_access_token
+
 from src.auth.authentication import JWT_CONTEXT_ATTR, JWT_PUBLIC_ATTR
 from src.auth.session_state import get_request_jwt
 from src.auth.simple import AuthenticationError, get_api_timeout, get_auth
@@ -40,6 +42,13 @@ def _get_context_jwt(ctx) -> Optional[str]:
     cv_token = get_request_jwt()
     if cv_token and isinstance(cv_token, str):
         return cv_token
+
+    # FastMCP 4 restores this standard token inside background task workers.
+    # Refresh-token middleware bridges into it at task submission time, while
+    # OAuthProxy populates it directly after token verification.
+    access_token = get_access_token()
+    if access_token and isinstance(access_token.token, str):
+        return access_token.token
 
     if not ctx:
         return None

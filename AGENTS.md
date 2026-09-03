@@ -195,12 +195,13 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Default `true` is safe for multi-instance deployments behind an L7 LB without sticky sessions
     - Set `false` only if you need streamable HTTP session reuse and have session affinity guaranteed
 
-- **Background tasks (SEP-1686 / Docket)**
+- **Background tasks (SEP-2663 / Docket)**
   - `FASTMCP_DOCKET_URL` (default in compose: `redis://redis:6379/0`; out-of-compose default: `memory://`):
     - Production: the Redis sidecar declared in `docker-compose.yml`. Internal-only (no published ports), reachable from openbridge-mcp via the compose network.
     - `memory://` is single-process and ephemeral — fine for `make test` and local `python main.py` runs without compose.
     - Tests pin this to `memory://` via fixtures so the suite stays offline.
   - `FASTMCP_DOCKET_CONCURRENCY` (optional, default `10`): max concurrent background tasks per worker.
+  - `FASTMCP_TASKS_ENCRYPTION_KEY` (required for Docker Compose): encrypts task context snapshots persisted in Redis. Snapshots include the submitting caller's access token and HTTP headers. Generate a stable value with `openssl rand -hex 32`; every server and worker sharing the queue must use the same value.
   - Every Openbridge-API tool registers with `task=TaskConfig(mode="optional")`; clients choose sync vs background per call. `get_capabilities` is exempt (no I/O).
 
 - **Code mode (primary client entry point)**

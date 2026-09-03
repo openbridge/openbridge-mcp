@@ -64,6 +64,9 @@ services:
       # Docket / FastMCP background-tasks backend. Internal compose DNS
       # resolves "redis" to the sidecar above. No public ingress.
       FASTMCP_DOCKET_URL: redis://redis:6379/0
+      # FastMCP task snapshots include request headers and access tokens.
+      # Require encryption because Redis persists its queue to an AOF volume.
+      FASTMCP_TASKS_ENCRYPTION_KEY: ${FASTMCP_TASKS_ENCRYPTION_KEY:?set FASTMCP_TASKS_ENCRYPTION_KEY in .env}
       # Multi-tenant fail-closed by default for the production stack.
       # When this is true, requests without an Authorization: Bearer
       # header are rejected with McpError(-32001) instead of silently
