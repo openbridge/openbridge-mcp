@@ -94,7 +94,7 @@ def test_remote_identity_uses_timeout(monkeypatch):
             json=lambda: {"data": [], "links": {"next": None}},
         )
 
-    monkeypatch.setattr("src.server.tools.base.get_auth_headers", lambda ctx=None: headers)
+    monkeypatch.setattr(remote_identity, "get_auth_headers", lambda ctx=None: headers)
     monkeypatch.setattr("src.server.tools.remote_identity.requests.get", fake_get)
 
     remote_identity.get_remote_identities()

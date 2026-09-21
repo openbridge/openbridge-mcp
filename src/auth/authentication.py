@@ -17,6 +17,9 @@ from fastmcp.exceptions import McpError
 from mcp.server.auth.middleware.auth_context import auth_context_var
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
+from src.utils.runtime_security import env_flag, require_client_auth_enabled
+
+from .exchange_coordinator import TokenExchangeCoordinator
 from .session_state import set_request_jwt
 from .simple import AuthenticationError, OpenbridgeAuth, get_auth, is_refresh_token
 
@@ -63,32 +66,10 @@ class AuthConfig:
     # Authorization header are rejected outright rather than falling back
     # to the server's OPENBRIDGE_REFRESH_TOKEN. Set this in any deployment
     # that serves more than one tenant from a shared instance.
-    require_client_auth: bool = False
+    require_client_auth: bool = True
     # Auth mode: "refresh_token" (default) uses OpenbridgeAuthMiddleware;
     # "oauth_proxy" uses FastMCP's built-in OAuthProxy with introspection.
     auth_mode: str = "refresh_token"
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Parse a boolean environment variable.
-
-    Accepts ``true``/``false``/``1``/``0``/``yes``/``no`` (case-insensitive).
-    Anything else falls back to *default* — boot-time config typos must not
-    silently flip security-relevant flags.
-    """
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().lower()
-    if normalized in {"true", "1", "yes", "on"}:
-        return True
-    if normalized in {"false", "0", "no", "off"}:
-        return False
-    logger.warning(
-        "%s=%r is not a recognized boolean; falling back to default %s",
-        name, raw, default,
-    )
-    return default
 
 
 def _parse_auth_mode(raw: str | None) -> str:
@@ -121,14 +102,14 @@ def create_openbridge_config() -> AuthConfig:
     When ``OPENBRIDGE_AUTH_MODE`` is ``"oauth_proxy"``, FastMCP's built-in
     OAuthProxy is used instead of ``OpenbridgeAuthMiddleware``.
     """
-    enabled = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+    enabled = env_flag("AUTH_ENABLED", default=True)
     auth_mode = _parse_auth_mode(os.getenv("OPENBRIDGE_AUTH_MODE"))
     return AuthConfig(
         enabled=enabled,
         refresh_token_enabled=enabled,
         jwt_validation_enabled=enabled,
         jwt_verify_signature=True,
-        require_client_auth=_env_flag("OPENBRIDGE_REQUIRE_CLIENT_AUTH", default=False),
+        require_client_auth=require_client_auth_enabled(),
         auth_mode=auth_mode,
     )
 
@@ -148,10 +129,17 @@ class OpenbridgeAuthMiddleware(Middleware):
     server-side ``OPENBRIDGE_REFRESH_TOKEN`` environment variable.
     """
 
-    def __init__(self, auth: OpenbridgeAuth, *, require_client_auth: bool = False):
+    def __init__(
+        self,
+        auth: OpenbridgeAuth,
+        *,
+        require_client_auth: bool = False,
+        exchange_coordinator: TokenExchangeCoordinator | None = None,
+    ):
         super().__init__()
         self._auth = auth
         self._require_client_auth = require_client_auth
+        self._exchange_coordinator = exchange_coordinator or TokenExchangeCoordinator()
 
     async def on_request(self, context: MiddlewareContext, call_next):
         if not context.fastmcp_context:
@@ -184,7 +172,10 @@ class OpenbridgeAuthMiddleware(Middleware):
         # to the server token and returning data for the wrong account.
         if client_token:
             try:
-                jwt_token = self._resolve_client_token(client_token)
+                jwt_token = await self._exchange_coordinator.resolve(
+                    f"client:{client_token}",
+                    lambda: self._resolve_client_token(client_token),
+                )
             except AuthenticationError as exc:
                 logger.warning("Client token exchange failed: %s", exc)
                 raise McpError(
@@ -224,7 +215,10 @@ class OpenbridgeAuthMiddleware(Middleware):
         # into strict per-tenant auth.
         if not jwt_token and not client_token:
             try:
-                jwt_token = self._auth.get_jwt()
+                jwt_token = await self._exchange_coordinator.resolve(
+                    "server",
+                    self._auth.get_jwt,
+                )
                 logger.debug("Using server refresh token to generate JWT")
             except Exception:
                 # Debug level: Some MCP endpoints (health, list tools) don't require auth

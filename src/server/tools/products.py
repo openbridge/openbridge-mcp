@@ -1,10 +1,10 @@
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Annotated, Dict, List, Optional, Tuple
 
 import requests
 from fastmcp.server.context import Context
-from pydantic import ConfigDict, StrictInt, validate_call
+from pydantic import ConfigDict, Field, StrictInt, validate_call
 
 from src.utils.table_resolver import merge_payloads_and_rules
 from src.utils.envelope import make_error
@@ -47,8 +47,9 @@ def list_all_product_basic_metadata(
         logger.error(f"Failed to retrieve product metadata: {response.status_code}")
         return [{"error": f"Failed to retrieve product metadata: {response.status_code} {response.text}"}]
 
+@validate_call(config=ConfigDict(strict=True, arbitrary_types_allowed=True))
 def get_product_card(
-    product_id: Optional[str],
+    product_id: Annotated[StrictInt, Field(gt=0)],
     ctx: Optional[Context] = None,
 ) -> Optional[dict]:
     """
@@ -98,7 +99,7 @@ def get_product_card(
         get_product_card(product_id) → confirm remote identity type + spm_requirements
 
     Args:
-        product_id: The product ID (from search_products).
+        product_id: The positive product ID returned by search_products.
 
     Returns:
         dict: Product card metadata, or {"error": "..."} if the request fails.

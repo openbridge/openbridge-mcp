@@ -10,7 +10,7 @@ services:
     # Public ingress points: 80 (ACME challenge + HTTPS redirect) and
     # 443 (the actual MCP traffic). The openbridge-mcp service no
     # longer publishes a port to the host.
-    image: caddy:2-alpine
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     depends_on:
       openbridge-mcp:
         condition: service_started
@@ -37,7 +37,7 @@ services:
     # to the host — only the openbridge-mcp service on the compose
     # network can reach it. AOF persistence to a named volume keeps the
     # task queue durable across container restarts.
-    image: redis:7-alpine
+    image: redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -61,6 +61,10 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # The application must listen on the compose network; Caddy remains
+      # the only published ingress.
+      MCP_HOST: 0.0.0.0
+      MCP_LIMIT_CONCURRENCY: ${MCP_LIMIT_CONCURRENCY:-100}
       # Docket / FastMCP background-tasks backend. Internal compose DNS
       # resolves "redis" to the sidecar above. No public ingress.
       FASTMCP_DOCKET_URL: redis://redis:6379/0
@@ -71,10 +75,17 @@ services:
       # When this is true, requests without an Authorization: Bearer
       # header are rejected with McpError(-32001) instead of silently
       # executing as the OPENBRIDGE_REFRESH_TOKEN principal. Operators
-      # running a single-tenant install can override by setting
-      # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false in `.env`. See README.md
-      # → "Per-client authentication".
+      # running a deliberately isolated single-tenant container can set
+      # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false only together with the explicit
+      # insecure-remote override below. See README.md → "Per-client authentication".
       OPENBRIDGE_REQUIRE_CLIENT_AUTH: ${OPENBRIDGE_REQUIRE_CLIENT_AUTH:-true}
+      OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH: ${OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH:-false}
+      OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY: ${OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY:-8}
+      OPENBRIDGE_ENABLE_QUERY_EXECUTION: ${OPENBRIDGE_ENABLE_QUERY_EXECUTION:-false}
+      OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS: ${OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS:-false}
+      MCP_PATH_TOKEN_ENABLED: ${MCP_PATH_TOKEN_ENABLED:-false}
+      MCP_PATH_TOKEN_TTL_DAYS: ${MCP_PATH_TOKEN_TTL_DAYS:-7}
+      MCP_PATH_TOKEN_MAX_AGE_DAYS: ${MCP_PATH_TOKEN_MAX_AGE_DAYS:-7}
       # Auth mode: "refresh_token" (default) uses the Bearer-token exchange
       # middleware. "oauth_proxy" activates FastMCP's built-in OAuthProxy,
       # which proxies the full OAuth 2.0 flow to Openbridge's auth service

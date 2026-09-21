@@ -43,7 +43,7 @@ from fastmcp_tasks.context import get_task_context
 from src.auth.authentication import OpenbridgeAuthMiddleware
 from src.server import mcp_server
 from src.server.tools.base import get_auth_headers
-from src.server.tools.tool_manifest import TOOL_MANIFEST
+from src.server.tools.tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
 from tests.server.test_mcp_server import FakeAuthConfig, FakeFastMCP
 
 
@@ -68,9 +68,13 @@ def _build_server(monkeypatch, *, api_key: bool = True) -> FakeFastMCP:
     """
     if api_key:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
     else:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
+        monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
+
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: FakeAuthConfig())
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
@@ -211,8 +215,9 @@ def test_every_api_tool_supports_optional_task_execution(monkeypatch):
             f"Tool {name!r} should advertise background-task support; "
             f"got task={task!r}"
         )
-        assert task.mode == "optional", (
-            f"Tool {name!r} should default to mode='optional'; got {task.mode!r}"
+        expected_mode = "forbidden" if name in PRIVILEGED_TOOL_NAMES else "optional"
+        assert task.mode == expected_mode, (
+            f"Tool {name!r} should use mode={expected_mode!r}; got {task.mode!r}"
         )
 
 

@@ -191,6 +191,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
 - **Server**
   - `MCP_PORT` (default `8000`): Port for HTTP MCP server
   - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the HTTP MCP server
+  - `MCP_LIMIT_CONCURRENCY` (optional, default `100`): Uvicorn open-connection cap; excess requests receive HTTP 503. SSE streams count toward it, so tune from observed concurrent sessions. Caddy caps request bodies at 1 MB and removes request URIs from access logs; production per-IP/principal rate limiting belongs at the ingress or WAF.
   - `MCP_STATELESS_HTTP` (optional, default `true`): Run FastMCP HTTP transport in stateless mode (fresh transport per request)
     - Default `true` is safe for multi-instance deployments behind an L7 LB without sticky sessions
     - Set `false` only if you need streamable HTTP session reuse and have session affinity guaranteed
@@ -202,7 +203,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Tests pin this to `memory://` via fixtures so the suite stays offline.
   - `FASTMCP_DOCKET_CONCURRENCY` (optional, default `10`): max concurrent background tasks per worker.
   - `FASTMCP_TASKS_ENCRYPTION_KEY` (required for Docker Compose): encrypts task context snapshots persisted in Redis. Snapshots include the submitting caller's access token and HTTP headers. Generate a stable value with `openssl rand -hex 32`; every server and worker sharing the queue must use the same value.
-  - Every Openbridge-API tool registers with `task=TaskConfig(mode="optional")`; clients choose sync vs background per call. `get_capabilities` is exempt (no I/O).
+  - Read-oriented Openbridge-API tools register with `task=TaskConfig(mode="optional")`; clients choose sync vs background per call. Privileged tools use `TaskConfig(mode="forbidden")`, and `get_capabilities` is exempt (no I/O).
 
 - **Code mode (primary client entry point)**
   - `CODE_MODE` (default `true`, **recommended on**): Code Mode is the primary surface — clients see only `tags`/`search`/`get_schema`/`execute`. `CODE_MODE=false` exposes the full direct catalog and emits a startup WARNING.
@@ -215,11 +216,17 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - When unset: Clients must provide `Authorization: Bearer <token>` headers
     - Client tokens take precedence over server tokens
     - Server starts successfully without this variable, enabling pure client-side auth
-  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Multi-tenant safety gate**
+  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `true`): **Multi-tenant safety gate**
     - When `true`: requests without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`
-    - **Required for any deployment serving more than one Openbridge account** — without it, an unauthenticated request silently executes as the server principal (cross-tenant leak)
-    - Leave `false` for single-tenant or local-dev installs where the server token fallback is intentional
+    - Keep `true` for every shared or remotely reachable deployment
+    - Set `MCP_HOST=127.0.0.1 OPENBRIDGE_REQUIRE_CLIENT_AUTH=false` only when local single-tenant server-token fallback is intentional
     - Backstopped at the tool layer: `src/server/tools/base.py` raises `AuthenticationError` if a tool is invoked without a primed JWT while this flag is on
+  - `OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH` (optional, default `false`): Dangerous compatibility override for a deliberately isolated single-tenant container that must bind `0.0.0.0`
+    - Required when `AUTH_ENABLED=false` or server-token fallback is combined with any non-loopback bind
+    - Never enable on a shared or publicly reachable application port; startup emits a prominent warning
+  - `OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY` (optional, default `8`): Positive worker limit for the dedicated refresh-token exchange executor
+    - Separate from FastMCP's sync-tool executor so a slow auth upstream cannot starve tool calls
+    - Concurrent exchanges for the same client credential are de-duplicated per process
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) for Openbridge HTTP requests
     - Connect timeout is fixed at 10 seconds
   - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings
@@ -227,28 +234,32 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Tune up for high-tenant-count deployments; tune down for memory-constrained environments
     - For shared cross-replica caching, swap `_InMemoryLRUTokenCache` for a `TokenCache`-conforming Redis adapter (see `src/auth/simple.py`)
 
-- **Authentication — URL-Embedded Auth / Path Tokens** (`refresh_token` mode only)
-  - `MCP_PATH_TOKEN_SECRET` (required for stable production tokens): Shared HS256 signing secret for JWTs embedded in connection URLs. Must match the secret used by the Openbridge console (or any external service generating path tokens). If unset, an ephemeral secret is generated on startup — all path tokens are invalidated on restart. Generate with `openssl rand -hex 32`.
-  - `MCP_PATH_TOKEN_TTL_DAYS` (optional, default `30`): Lifetime in days for tokens generated by `build_connection_url` or `PathTokenMiddleware.generate_token`. External tokens are accepted until their own `exp` claim expires regardless of this setting.
+- **Authentication — Deprecated URL-Embedded Auth / Path Tokens** (`refresh_token` mode only)
+  - `MCP_PATH_TOKEN_ENABLED` (optional, default `false`): Explicitly enables legacy path-token handling; rejected in `oauth_proxy` mode
+  - `MCP_PATH_TOKEN_SECRET` (required when enabled): Unique shared HS256 secret of at least 32 bytes; missing, short, and repository-placeholder values fail startup
+  - `MCP_PATH_TOKEN_TTL_DAYS` (optional, default `7`, maximum `7`): Generated token lifetime
+  - `MCP_PATH_TOKEN_MAX_AGE_DAYS` (optional, default `7`, maximum `7`): Accepted token age and declared lifetime
   - **Implementation:** `src/auth/path_token_middleware.py` — `PathTokenMiddleware` (pure ASGI), `build_connection_url`, `_sign_path_token`, `_verify_path_token`, `load_secret`
-  - **Verification:** signature (HS256), expiry (`exp`), audience (`aud == "openbridge-mcp"`). Issuer (`iss`) is not validated — any signing service that shares the secret is accepted.
-  - **ASGI placement:** `PathTokenMiddleware` wraps the FastMCP `StarletteWithLifespan` app at the outermost uvicorn level in `main.py` (`server.http_app()` → wrap → `uvicorn.run()`). Must be outermost because `/mcp/{token}` has no registered Starlette route — placing it inside the app via `server.run(middleware=[...])` causes 404.
+  - **Verification:** signature (HS256), required `sub`/`iat`/`exp`/`aud` claims, expiry, audience, refresh-token-shaped subject, and maximum age/lifetime. Issuer (`iss`) is not validated — any signing service that shares the secret is accepted.
+  - **Residual risk:** the URL contains a bearer-equivalent credential and may leak outside the server. Caddy URI logging is removed in the ingress-hardening task, but opaque revocable references are required to close OB-MCP-02.
+  - **ASGI placement:** When explicitly enabled, `PathTokenMiddleware` wraps the FastMCP `StarletteWithLifespan` app at the outermost uvicorn level in `main.py` (`server.http_app()` → wrap → `uvicorn.run()`). Must be outermost because `/mcp/{token}` has no registered Starlette route.
 
 - **Authentication (OAuth Proxy Mode)** — activated by `OPENBRIDGE_AUTH_MODE=oauth_proxy`
   - `OPENBRIDGE_AUTH_MODE` (optional, default `"refresh_token"`): Auth mode selector.
     - `"refresh_token"`: Default — `OpenbridgeAuthMiddleware` exchanges Bearer refresh tokens for JWTs.
     - `"oauth_proxy"`: FastMCP's built-in `OAuthProxy` handles the full OAuth 2.0 authorization code flow, proxying to Openbridge's OAuth endpoints and verifying tokens via introspection. Mutually exclusive with `refresh_token` mode — cannot coexist with `OpenbridgeAuthMiddleware`.
   - `MCP_BASE_URL` (required for `oauth_proxy` in production): Externally-reachable base URL of the MCP server, used by FastMCP to construct the OAuth redirect URI. Example: `https://mcp.example.com`. Defaults to `http://{MCP_HOST}:{MCP_PORT}` — always set this explicitly when running behind a reverse proxy.
-  - `MCP_JWT_SIGNING_KEY` (recommended for `oauth_proxy`): Stable secret used by FastMCP to sign the session tokens it issues to MCP clients. If unset, a random UUID is generated per process start — MCP sessions will not survive server restarts. Set to a strong, stable secret for production deployments.
+  - `MCP_JWT_SIGNING_KEY`: Stable secret used by FastMCP to sign session tokens. Remotely bound OAuth proxy deployments require at least 32 bytes of non-placeholder material; generate with `openssl rand -hex 32`. Loopback development may omit it and use an ephemeral key.
   - `OPENBRIDGE_OAUTH_CLIENT_ID` (optional, default `"openbridge-mcp"`): Client ID sent to the Openbridge introspection endpoint. The endpoint reads credentials from embedded secrets; this value is forwarded but typically not validated.
   - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `"not-used"`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
   - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default `""`): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets; leave empty unless instructed otherwise.
 
 - **Query Validation (AI-powered)**
-  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable `validate_query` and `execute_query` tools
-    - Without this, query validation tools are not registered
-  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `true`): Controls `execute_query` registration independently
-    - When `false`, `validate_query` remains available but `execute_query` is not registered
+  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): A real key enables `validate_query` and is also required for `execute_query`
+    - Without a key, neither query tool is registered
+  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `false`): Explicitly opts in to `execute_query` registration
+    - Execution requires both this flag set to `true` and a real sampling API key; `validate_query` can remain available without execution
+  - `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS` (optional, default `false`): Registers the credential-returning Amazon access-token tool and mutation tools. Enabling it exposes those operations through Code Mode `execute`; restrict it to trusted clients with upstream authorization. Set it before rollout only for deployments that need the legacy full catalog, then verify with `get_capabilities`.
   - SQL validation calls the OpenAI Responses API directly because FastMCP 4 removed server-initiated context sampling
   - `FASTMCP_SAMPLING_MODEL` (optional, default `gpt-4o-mini`): OpenAI model for query validation
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint
@@ -545,7 +556,7 @@ Before approving, ask:
 1. Check logs: `docker compose logs -f openbridge-mcp`
 2. Verify env vars: Ensure `.env` has all required variables
 3. Test auth: `OPENBRIDGE_REFRESH_TOKEN` must be in `xxx:yyy` format
-4. Run local: `AUTH_ENABLED=false make serve` to bypass auth during dev
+4. Run local: `MCP_HOST=127.0.0.1 AUTH_ENABLED=false make serve` to bypass auth during dev
 5. Check port: Server runs on `MCP_PORT` (default 8000)
 
 ## Getting Help

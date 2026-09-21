@@ -2,6 +2,7 @@
 import base64
 import datetime
 import json
+import time
 from unittest.mock import AsyncMock
 
 import jwt as pyjwt
@@ -18,6 +19,7 @@ from src.auth.path_token_middleware import (
 
 SECRET = "test-secret-key-for-unit-tests-x"  # 32 bytes — HS256 minimum
 OTHER_SECRET = "different-secret-key-for-unit-tests"  # 35 bytes
+REFRESH_TOKEN = "account123:secret123"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,11 +47,84 @@ def _expired_token(secret: str = SECRET) -> str:
     return pyjwt.encode(payload, secret, algorithm="HS256")
 
 
+def utc_now_plus(**kwargs) -> datetime.datetime:
+    return datetime.datetime.now(datetime.UTC) + datetime.timedelta(**kwargs)
+
+
 # ── _verify_path_token ────────────────────────────────────────────────────────
 
 def test_verify_valid_token():
-    token = _sign_path_token("acc:sec", SECRET, ttl_days=1)
-    assert _verify_path_token(token, SECRET) == "acc:sec"
+    token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
+    assert _verify_path_token(token, SECRET) == REFRESH_TOKEN
+
+
+def test_rejects_token_without_iat():
+    token = pyjwt.encode(
+        {"sub": REFRESH_TOKEN, "aud": AUDIENCE, "exp": utc_now_plus(days=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    assert _verify_path_token(token, SECRET) is None
+
+
+def test_rejects_token_older_than_maximum_age(monkeypatch):
+    monkeypatch.setenv("MCP_PATH_TOKEN_MAX_AGE_DAYS", "7")
+    issued_at = time.time() - datetime.timedelta(days=7, minutes=1).total_seconds()
+    token = pyjwt.encode(
+        {
+            "sub": REFRESH_TOKEN,
+            "aud": AUDIENCE,
+            "iat": issued_at,
+            "exp": time.time() + 3600,
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+    assert _verify_path_token(token, SECRET) is None
+
+
+def test_rejects_token_lifetime_over_maximum(monkeypatch):
+    monkeypatch.setenv("MCP_PATH_TOKEN_MAX_AGE_DAYS", "7")
+    issued_at = time.time()
+    token = pyjwt.encode(
+        {
+            "sub": REFRESH_TOKEN,
+            "aud": AUDIENCE,
+            "iat": issued_at,
+            "exp": issued_at + datetime.timedelta(days=8).total_seconds(),
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+    assert _verify_path_token(token, SECRET) is None
+
+
+def test_rejects_non_refresh_token_subject():
+    token = pyjwt.encode(
+        {
+            "sub": "ordinary-jwt-subject",
+            "aud": AUDIENCE,
+            "iat": utc_now_plus(),
+            "exp": utc_now_plus(days=1),
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+    assert _verify_path_token(token, SECRET) is None
+
+
+def test_rejects_future_iat():
+    token = pyjwt.encode(
+        {
+            "sub": REFRESH_TOKEN,
+            "aud": AUDIENCE,
+            "iat": utc_now_plus(minutes=2),
+            "exp": utc_now_plus(days=1),
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+    assert _verify_path_token(token, SECRET) is None
 
 
 def test_verify_expired_token():
@@ -73,9 +148,9 @@ def test_verify_missing_audience():
 def test_verify_external_issuer_accepted():
     """Tokens from external issuers are accepted as long as signature and audience are valid."""
     now = datetime.datetime.now(datetime.UTC)
-    payload = {"sub": "acc:sec", "iss": "https://authentication.api.openbridge.io", "aud": AUDIENCE, "iat": now, "exp": now + datetime.timedelta(days=1)}
+    payload = {"sub": REFRESH_TOKEN, "iss": "https://authentication.api.openbridge.io", "aud": AUDIENCE, "iat": now, "exp": now + datetime.timedelta(days=1)}
     token = pyjwt.encode(payload, SECRET, algorithm="HS256")
-    assert _verify_path_token(token, SECRET) == "acc:sec"
+    assert _verify_path_token(token, SECRET) == REFRESH_TOKEN
 
 
 def test_verify_wrong_secret():
@@ -123,7 +198,7 @@ def test_build_connection_url_round_trip():
 
 @pytest.mark.asyncio
 async def test_injects_header_and_rewrites_path():
-    token = _sign_path_token("user:pass", SECRET, ttl_days=1)
+    token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
     scope = _make_scope(f"/mcp/{token}")
 
     received = {}
@@ -135,12 +210,12 @@ async def test_injects_header_and_rewrites_path():
 
     assert received["path"] == "/mcp"
     auth_values = [v for k, v in received["headers"] if k == b"authorization"]
-    assert auth_values == [b"Bearer user:pass"]
+    assert auth_values == [f"Bearer {REFRESH_TOKEN}".encode()]
 
 
 @pytest.mark.asyncio
 async def test_raw_path_also_rewritten():
-    token = _sign_path_token("user:pass", SECRET, ttl_days=1)
+    token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
     scope = _make_scope(f"/mcp/{token}")
 
     async def fake_app(s, receive, send):
@@ -154,7 +229,7 @@ async def test_raw_path_also_rewritten():
 
 @pytest.mark.asyncio
 async def test_preserves_subpath():
-    token = _sign_path_token("user:pass", SECRET, ttl_days=1)
+    token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
     scope = _make_scope(f"/mcp/{token}/sse")
 
     async def fake_app(s, receive, send):
@@ -169,7 +244,7 @@ async def test_preserves_subpath():
 
 @pytest.mark.asyncio
 async def test_skips_when_auth_header_present():
-    token = _sign_path_token("user:pass", SECRET, ttl_days=1)
+    token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
     scope = _make_scope(f"/mcp/{token}", auth_header="Bearer existing")
     original_path = scope["path"]
 
@@ -183,7 +258,7 @@ async def test_skips_when_auth_header_present():
 
 @pytest.mark.asyncio
 async def test_skips_non_mcp_path():
-    token = _sign_path_token("user:pass", SECRET, ttl_days=1)
+    token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
     scope = _make_scope(f"/health/{token}")
 
     mw = _make_middleware()

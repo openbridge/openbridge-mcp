@@ -47,6 +47,26 @@ from src.auth.simple import OpenbridgeAuth
 from src.server.tools import base as base_tools
 
 
+@pytest.mark.parametrize(("configured", "expected"), [("75", 75), (None, 100)])
+def test_main_passes_concurrency_limit_to_uvicorn(monkeypatch, configured, expected):
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+    monkeypatch.delenv("MCP_PATH_TOKEN_ENABLED", raising=False)
+    if configured is None:
+        monkeypatch.delenv("MCP_LIMIT_CONCURRENCY", raising=False)
+    else:
+        monkeypatch.setenv("MCP_LIMIT_CONCURRENCY", configured)
+    captured = {}
+    fake_server = SimpleNamespace(http_app=lambda **_kwargs: object())
+    monkeypatch.setattr(main, "load_dotenv", lambda _path: None)
+    monkeypatch.setattr(main, "create_mcp_server", lambda: fake_server)
+    monkeypatch.setattr(main, "validate_runtime_security", lambda _host: None)
+    monkeypatch.setattr(main.uvicorn, "run", lambda _app, **kwargs: captured.update(kwargs))
+
+    main.main()
+
+    assert captured["limit_concurrency"] == expected
+
+
 # ---------------------------------------------------------------------------
 # Shared fakes
 # ---------------------------------------------------------------------------
@@ -344,10 +364,8 @@ def test_stateless_http_default_safe(monkeypatch, raw, expected):
 # 6. Boot-time WARNING when server-token fallback is reachable
 # ---------------------------------------------------------------------------
 #
-# Per the security review: the fallback is gated by an env var that
-# *defaults* to permissive. The fix isn't to flip the default (would
-# break single-tenant installs); it's to make the dangerous combination
-# loud at boot. These tests lock that behavior in.
+# Server-token fallback is now an explicit local-only opt-out. These tests
+# keep that local choice visible and make the remote escape hatch unmistakable.
 
 
 def test_warn_emitted_when_server_token_set_and_require_client_auth_off(monkeypatch, caplog):
@@ -360,7 +378,8 @@ def test_warn_emitted_when_server_token_set_and_require_client_auth_off(monkeypa
     from src.server import mcp_server
 
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "server:fallback")
-    monkeypatch.delenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", raising=False)
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
 
     with caplog.at_level(logging.WARNING, logger="mcp_query_execution.mcp_server"):
         mcp_server._warn_if_server_token_fallback_open()
@@ -371,6 +390,24 @@ def test_warn_emitted_when_server_token_set_and_require_client_auth_off(monkeypa
     assert "OPENBRIDGE_REQUIRE_CLIENT_AUTH" in msg
     assert "OPENBRIDGE_REFRESH_TOKEN" in msg
     assert "multi-tenant" in msg.lower()
+
+
+def test_warn_is_high_signal_for_remote_unsafe_override(monkeypatch, caplog):
+    import logging
+
+    from src.server import mcp_server
+
+    monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "server:fallback")
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
+    monkeypatch.setenv("OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH", "true")
+    monkeypatch.setenv("MCP_HOST", "0.0.0.0")
+
+    with caplog.at_level(logging.WARNING, logger="mcp_query_execution.mcp_server"):
+        mcp_server._warn_if_server_token_fallback_open()
+
+    message = " ".join(record.getMessage() for record in caplog.records)
+    assert "DANGER" in message
+    assert "OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true" in message
 
 
 def test_no_warn_when_require_client_auth_enabled(monkeypatch, caplog):

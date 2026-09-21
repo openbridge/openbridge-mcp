@@ -22,6 +22,11 @@ from src.server.tools import capabilities as capabilities_tools  # noqa: E402
 from src.server.tools import skills_meta as skills_meta_tools  # noqa: E402
 from src.server.tools.tool_manifest import TOOL_MANIFEST  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
+from src.utils.runtime_security import (  # noqa: E402
+    env_flag,
+    is_loopback_host,
+    require_client_auth_enabled,
+)
 from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
 from src.auth.manager import get_auth_manager  # noqa: E402
 from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy  # noqa: E402
@@ -79,27 +84,32 @@ def _log_capability_summary(registered_tool_names: set[str]) -> None:
 def _warn_if_server_token_fallback_open() -> None:
     """Emit a startup WARNING when the server-token fallback is reachable.
 
-    Multi-tenant deployments must set ``OPENBRIDGE_REQUIRE_CLIENT_AUTH=true``
-    so requests without a Bearer header are rejected instead of silently
-    executing as the principal of ``OPENBRIDGE_REFRESH_TOKEN``. Today the
-    flag defaults to false (backward-compat for single-tenant installs)
-    — but if an operator has *also* configured a server refresh token,
-    that combination is the cross-tenant leak shape the security review
-    flagged. Surface it loudly at boot rather than waiting for the wrong
-    account to receive someone else's data.
+    Explicit local fallback is supported for single-tenant development.
+    Remote fallback requires a separately named dangerous override and is
+    surfaced with a high-signal warning.
     """
     server_token_set = bool(os.getenv("OPENBRIDGE_REFRESH_TOKEN"))
     if not server_token_set:
         return
-    raw_flag = (os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH") or "").strip().lower()
-    require_client_auth = raw_flag in {"true", "1", "yes", "on"}
-    if require_client_auth:
+    if require_client_auth_enabled():
+        return
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    if not is_loopback_host(host) and env_flag(
+        "OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH",
+        default=False,
+    ):
+        logger.warning(
+            "DANGER: remote server-token fallback is enabled by "
+            "OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true. Unauthenticated "
+            "requests execute as OPENBRIDGE_REFRESH_TOKEN; use only for a "
+            "deliberately isolated single-tenant deployment."
+        )
         return
     logger.warning(
-        "OPENBRIDGE_REFRESH_TOKEN is set but OPENBRIDGE_REQUIRE_CLIENT_AUTH is not enabled. "
-        "Requests without an Authorization: Bearer header will execute as the server principal. "
-        "This is fine for single-tenant deployments; for ANY multi-tenant deployment set "
-        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=true to fail closed and avoid cross-tenant data leakage."
+        "OPENBRIDGE_REFRESH_TOKEN fallback is enabled because "
+        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=false. Keep MCP_HOST on loopback for "
+        "local single-tenant use; remote startup otherwise fails closed, and "
+        "multi-tenant deployments must require client authentication."
     )
 
 def _is_async_callable(func: Callable[..., Any]) -> bool:
@@ -108,13 +118,6 @@ def _is_async_callable(func: Callable[..., Any]) -> bool:
     while isinstance(target, functools.partial):
         target = target.func
     return inspect.iscoroutinefunction(target)
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _async_wrap(sync_func: Callable[..., Any]) -> Callable[..., Any]:
@@ -202,6 +205,7 @@ def create_mcp_server() -> FastMCP:
     # execution OPTIONAL — clients choose per call. Tools without
     # task=... fall through to "forbidden" by FastMCP's default.
     DEFAULT_TASK_CONFIG = TaskConfig(mode="optional")
+    FORBIDDEN_TASK_CONFIG = TaskConfig(mode="forbidden")
 
     def register_tool(name: str, func, *, task: TaskConfig | None = DEFAULT_TASK_CONFIG):
         impl = func if _is_async_callable(func) else _async_wrap(func)
@@ -235,7 +239,7 @@ def create_mcp_server() -> FastMCP:
     # Service Tools
     # Query validation tools require an API key for LLM sampling
     has_sampling_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
-    query_execution_enabled = _env_flag("OPENBRIDGE_ENABLE_QUERY_EXECUTION", default=True)
+    query_execution_enabled = capabilities_tools.query_execution_enabled()
     if has_sampling_key:
         register_tool("validate_query", service_tools.validate_query)
         if query_execution_enabled:
@@ -244,7 +248,13 @@ def create_mcp_server() -> FastMCP:
             logger.info("Skipping execute_query: OPENBRIDGE_ENABLE_QUERY_EXECUTION is false")
     else:
         logger.info("Skipping SQL query tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
-    register_tool("get_amazon_api_access_token", service_tools.get_amazon_api_access_token)
+    privileged_enabled = capabilities_tools.privileged_tools_enabled()
+    if privileged_enabled:
+        register_tool(
+            "get_amazon_api_access_token",
+            service_tools.get_amazon_api_access_token,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
     register_tool("get_amazon_advertising_profiles", service_tools.get_amazon_advertising_profiles)
     register_tool("get_table_schema", service_tools.get_table_schema)
     register_tool("get_suggested_table_names", service_tools.get_suggested_table_names)
@@ -254,14 +264,32 @@ def create_mcp_server() -> FastMCP:
     register_tool("get_jobs", jobs_tools.get_jobs)
     register_tool("get_job_by_id", jobs_tools.get_job_by_id)
     register_tool("get_history_by_id", jobs_tools.get_history_by_id)
-    register_tool("update_history_status", jobs_tools.update_history_status)
-    register_tool("create_job", jobs_tools.create_job)
+    if privileged_enabled:
+        register_tool(
+            "update_history_status",
+            jobs_tools.update_history_status,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
+        register_tool("create_job", jobs_tools.create_job, task=FORBIDDEN_TASK_CONFIG)
     # Subscriptions tools
     register_tool("get_subscriptions", subscriptions_tools.get_subscriptions)
     register_tool("get_subscription_by_id", subscriptions_tools.get_subscription_by_id)
-    register_tool("create_subscription", subscriptions_tools.create_subscription)
-    register_tool("update_subscription", subscriptions_tools.update_subscription)
-    register_tool("cancel_subscription", subscriptions_tools.cancel_subscription)
+    if privileged_enabled:
+        register_tool(
+            "create_subscription",
+            subscriptions_tools.create_subscription,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
+        register_tool(
+            "update_subscription",
+            subscriptions_tools.update_subscription,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
+        register_tool(
+            "cancel_subscription",
+            subscriptions_tools.cancel_subscription,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
     register_tool("get_storage_subscriptions", subscriptions_tools.get_storage_subscriptions)
     # Products tools
     register_tool("get_product_stage_ids", products_tools.get_product_stage_ids)
@@ -277,7 +305,6 @@ def create_mcp_server() -> FastMCP:
         return JSONResponse({
             "status": "healthy",
             "service": "openbridge-mcp",
-            "version": _get_service_version(),
         })
 
     if is_code_mode_enabled():

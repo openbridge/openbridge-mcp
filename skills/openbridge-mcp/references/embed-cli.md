@@ -14,6 +14,12 @@ Use embed-cli when:
 Otherwise prefer the MCP — it's better at multi-step planning, returns
 structured envelopes, and respects per-tenant auth.
 
+The MCP's credential-returning and mutation tools are default-off behind
+`OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS`. Check `get_capabilities()` before using
+an MCP workflow. Do not silently fall back to embed-cli to bypass that policy;
+use the CLI only when the user explicitly chose it and preserve destructive
+operation confirmations.
+
 ## Auth
 
 Same refresh tokens (`xxx:yyy`). Two ways to pass:

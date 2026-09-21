@@ -6,6 +6,36 @@ from pydantic import ValidationError
 from src.server.tools import products
 
 
+@pytest.mark.parametrize("product_id", ["../../amzadv/token/123", "1?admin=true", 0, -1])
+def test_get_product_card_rejects_invalid_product_id(monkeypatch, product_id):
+    monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {})
+
+    def fail_http(*args, **kwargs):
+        raise AssertionError("HTTP dispatch must not occur for an invalid product_id")
+
+    monkeypatch.setattr(products.requests, "get", fail_http)
+    with pytest.raises(ValueError):
+        products.get_product_card(product_id)
+
+
+def test_get_product_card_uses_scoped_integer_path(monkeypatch):
+    monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {})
+    monkeypatch.setattr(
+        products,
+        "PRODUCT_CARDS_API_BASE_URL",
+        "https://service.test/service/product-cards/card",
+    )
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        return SimpleNamespace(status_code=200, json=lambda: {"id": 50})
+
+    monkeypatch.setattr(products.requests, "get", fake_get)
+    assert products.get_product_card(50) == {"id": 50}
+    assert seen["url"] == "https://service.test/service/product-cards/card/50"
+
+
 def test_search_products_finds_matches(monkeypatch):
     """Test that search_products finds matching products."""
     monkeypatch.setattr(products, "get_auth_headers", lambda ctx=None: {"Authorization": "token"})

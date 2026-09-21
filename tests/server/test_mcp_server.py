@@ -4,7 +4,7 @@ import json
 import pytest
 
 from src.server import mcp_server
-from src.server.tools.tool_manifest import TOOL_MANIFEST
+from src.server.tools.tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
 
 
 class FakeAuthConfig:
@@ -65,6 +65,7 @@ class FakeFastMCP:
 @pytest.fixture(autouse=True)
 def disable_code_mode_by_default(monkeypatch):
     monkeypatch.setenv("CODE_MODE", "false")
+    monkeypatch.delenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", raising=False)
 
 
 def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
@@ -74,6 +75,8 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
 
     # Set an API key to enable query validation tools
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
@@ -101,7 +104,6 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
         "get_remote_identity_by_id",
         "validate_query",
         "execute_query",
-        "get_amazon_api_access_token",
         "get_amazon_advertising_profiles",
         "get_table_schema",
         "get_suggested_table_names",
@@ -109,13 +111,8 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
         "get_jobs",
         "get_job_by_id",
         "get_history_by_id",
-        "update_history_status",
-        "create_job",
         "get_subscriptions",
         "get_subscription_by_id",
-        "create_subscription",
-        "update_subscription",
-        "cancel_subscription",
         "get_storage_subscriptions",
         "get_product_stage_ids",
         "search_products",
@@ -124,7 +121,7 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
         "list_all_product_basic_metadata",
     }
 
-    assert expected_tools == set(server.registered_tools)
+    assert expected_tools | PRIVILEGED_TOOL_NAMES == set(server.registered_tools)
 
 
 def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
@@ -155,7 +152,6 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
         "get_remote_identities",
         "get_remote_identity_by_id",
         # validate_query and execute_query should be MISSING
-        "get_amazon_api_access_token",
         "get_amazon_advertising_profiles",
         "get_table_schema",
         "get_suggested_table_names",
@@ -163,13 +159,8 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
         "get_jobs",
         "get_job_by_id",
         "get_history_by_id",
-        "update_history_status",
-        "create_job",
         "get_subscriptions",
         "get_subscription_by_id",
-        "create_subscription",
-        "update_subscription",
-        "cancel_subscription",
         "get_storage_subscriptions",
         "get_product_stage_ids",
         "search_products",
@@ -191,6 +182,7 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     # Set FASTMCP_SAMPLING_API_KEY instead of OPENAI_API_KEY
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
@@ -202,6 +194,26 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     # validate_query and execute_query should be registered with FASTMCP_SAMPLING_API_KEY
     assert "validate_query" in server.registered_tools
     assert "execute_query" in server.registered_tools
+
+
+def test_query_execution_defaults_disabled(monkeypatch):
+    fake_config = FakeAuthConfig()
+    monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
+    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
+    monkeypatch.setattr(
+        mcp_server,
+        "create_auth_middleware",
+        lambda *args, **kwargs: [object()],
+    )
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert "validate_query" in server.registered_tools
+    assert "execute_query" not in server.registered_tools
 
 
 def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
@@ -343,7 +355,7 @@ def test_registered_tools_match_manifest_without_sampling_key(monkeypatch):
 
     server = _build_server_with_defaults(monkeypatch)
 
-    expected = set(TOOL_MANIFEST.keys()) - SAMPLING_GATED_TOOLS
+    expected = set(TOOL_MANIFEST.keys()) - SAMPLING_GATED_TOOLS - PRIVILEGED_TOOL_NAMES
     assert set(server.registered_tools) == expected, (
         "Manifest↔registration drift detected. Either a tool was added to "
         "TOOL_MANIFEST without a register_tool call in mcp_server.py, or a "
@@ -358,6 +370,8 @@ def test_registered_tools_match_manifest_with_sampling_key(monkeypatch):
     TOOL_MANIFEST keyset — no orphan tools, no missing registrations."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
 
     server = _build_server_with_defaults(monkeypatch)
 
@@ -367,10 +381,32 @@ def test_registered_tools_match_manifest_with_sampling_key(monkeypatch):
     )
 
 
+def test_privileged_tools_are_absent_by_default(monkeypatch):
+    server = _build_server_with_defaults(monkeypatch)
+    assert PRIVILEGED_TOOL_NAMES.isdisjoint(server.registered_tools)
+
+
+def test_production_shaped_opt_in_registers_privileged_tools(monkeypatch):
+    synthetic_production = {
+        "OPENBRIDGE_AUTH_MODE": "oauth_proxy",
+        "MCP_HOST": "0.0.0.0",
+        "MCP_BASE_URL": "https://mcp.example.test",
+        "MCP_JWT_SIGNING_KEY": "x" * 32,
+        "OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS": "true",
+    }
+    for name, value in synthetic_production.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: FakeAuthConfig())
+
+    server = _build_server_with_defaults(monkeypatch)
+
+    assert PRIVILEGED_TOOL_NAMES.issubset(server.registered_tools)
+    for name in PRIVILEGED_TOOL_NAMES:
+        assert server.registered_tools[name]["task"].mode == "forbidden"
+
+
 def test_health_endpoint_returns_documented_shape(monkeypatch):
-    """Lock the /health JSON contract: status, service, version. Load
-    balancers and uptime monitors depend on these field names."""
-    monkeypatch.setattr(mcp_server, "version", lambda _: "9.9.9")
+    """The public health response is stable and discloses no version."""
     server = _build_server_with_defaults(monkeypatch)
 
     handler = server.custom_routes["/health"]["func"]
@@ -381,8 +417,8 @@ def test_health_endpoint_returns_documented_shape(monkeypatch):
     assert body == {
         "status": "healthy",
         "service": "openbridge-mcp",
-        "version": "9.9.9",
     }
+    assert "version" not in body
 
 
 def test_no_orphan_manifest_entries(monkeypatch):
@@ -396,6 +432,8 @@ def test_no_orphan_manifest_entries(monkeypatch):
 
     # Regime 2 — sampling key present
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
     with_key_tools = set(_build_server_with_defaults(monkeypatch).registered_tools)
 
     reachable = no_key_tools | with_key_tools
