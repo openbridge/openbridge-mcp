@@ -1,5 +1,5 @@
 # Use the requested Python runtime on Debian Bookworm slim for a smaller image.
-FROM python:3.14-slim-bookworm
+FROM python:3.14-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56
 
 # Keep container behavior predictable:
 # - no .pyc files written to disk
@@ -38,7 +38,7 @@ COPY schemas/ /app/schemas/
 COPY skills/ /app/skills/
 
 # Install the exact production dependency set captured in uv.lock.
-RUN python -m pip install uv==0.12.5 \
+RUN python -m pip install uv==0.12.17 \
     && uv sync --frozen --no-dev --no-editable
 
 # Drop root privileges for runtime security.

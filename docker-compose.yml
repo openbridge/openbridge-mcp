@@ -10,7 +10,7 @@ services:
     # Public ingress points: 80 (ACME challenge + HTTPS redirect) and
     # 443 (the actual MCP traffic). The openbridge-mcp service no
     # longer publishes a port to the host.
-    image: caddy:2-alpine
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     depends_on:
       openbridge-mcp:
         condition: service_started
@@ -37,7 +37,7 @@ services:
     # to the host — only the openbridge-mcp service on the compose
     # network can reach it. AOF persistence to a named volume keeps the
     # task queue durable across container restarts.
-    image: redis:7-alpine
+    image: redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data

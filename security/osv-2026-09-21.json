@@ -1,0 +1,850 @@
+{
+  "deduplicated_ghsas": [],
+  "lock_sha256": "d8f0d16b7791085b2e2befa86f696a225562342301513842245a8f985fc28a00",
+  "package_count": 105,
+  "queries": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "aiofile"
+      },
+      "version": "3.12.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "annotated-doc"
+      },
+      "version": "0.0.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "annotated-types"
+      },
+      "version": "0.8.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "anyio"
+      },
+      "version": "4.15.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "attrs"
+      },
+      "version": "26.1.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "authlib"
+      },
+      "version": "1.8.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "beartype"
+      },
+      "version": "0.22.9"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "burner-redis"
+      },
+      "version": "0.1.7"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cachetools"
+      },
+      "version": "7.2.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "caio"
+      },
+      "version": "0.12.4"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "certifi"
+      },
+      "version": "2026.7.22"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cffi"
+      },
+      "version": "2.1.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "charset-normalizer"
+      },
+      "version": "3.5.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "click"
+      },
+      "version": "8.5.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cloudpickle"
+      },
+      "version": "3.1.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "colorama"
+      },
+      "version": "0.4.6"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cronsim"
+      },
+      "version": "2.7"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cryptography"
+      },
+      "version": "50.0.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cyclopts"
+      },
+      "version": "4.25.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "distro"
+      },
+      "version": "1.9.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "dnspython"
+      },
+      "version": "2.8.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "docstring-parser"
+      },
+      "version": "0.18.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "email-validator"
+      },
+      "version": "2.3.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "exceptiongroup"
+      },
+      "version": "1.3.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "fastmcp"
+      },
+      "version": "4.0.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "fastmcp-slim"
+      },
+      "version": "4.0.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "fastmcp-tasks"
+      },
+      "version": "4.0.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "griffelib"
+      },
+      "version": "2.3.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "h11"
+      },
+      "version": "0.16.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "httpcore"
+      },
+      "version": "1.0.9"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "httpcore2"
+      },
+      "version": "2.13.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "httpx"
+      },
+      "version": "0.28.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "httpx2"
+      },
+      "version": "2.13.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "httpx2-jsfetch"
+      },
+      "version": "1.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "idna"
+      },
+      "version": "3.20"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "iniconfig"
+      },
+      "version": "2.3.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jaraco-classes"
+      },
+      "version": "3.4.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jaraco-context"
+      },
+      "version": "6.1.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jaraco-functools"
+      },
+      "version": "4.6.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jeepney"
+      },
+      "version": "0.9.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jiter"
+      },
+      "version": "0.17.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "joserfc"
+      },
+      "version": "1.7.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jsonref"
+      },
+      "version": "1.1.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jsonschema"
+      },
+      "version": "4.26.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jsonschema-path"
+      },
+      "version": "0.5.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "jsonschema-specifications"
+      },
+      "version": "2025.9.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "keyring"
+      },
+      "version": "25.7.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "markdown-it-py"
+      },
+      "version": "4.2.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "mcp"
+      },
+      "version": "2.2.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "mcp-types"
+      },
+      "version": "2.2.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "mdurl"
+      },
+      "version": "0.1.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "more-itertools"
+      },
+      "version": "11.1.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "openai"
+      },
+      "version": "2.54.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "openapi-pydantic"
+      },
+      "version": "0.5.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "opentelemetry-api"
+      },
+      "version": "1.44.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "packaging"
+      },
+      "version": "26.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pathable"
+      },
+      "version": "0.6.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "platformdirs"
+      },
+      "version": "4.11.11"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pluggy"
+      },
+      "version": "1.6.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "prometheus-client"
+      },
+      "version": "0.26.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "py-key-value-aio"
+      },
+      "version": "0.4.6"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pycparser"
+      },
+      "version": "3.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydantic"
+      },
+      "version": "2.13.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydantic-core"
+      },
+      "version": "2.46.5"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydantic-monty"
+      },
+      "version": "0.0.21"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydantic-monty-client"
+      },
+      "version": "0.0.21"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydantic-monty-runtime"
+      },
+      "version": "0.0.21"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydantic-settings"
+      },
+      "version": "2.15.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pydocket"
+      },
+      "version": "0.25.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pygments"
+      },
+      "version": "2.21.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pyjwt"
+      },
+      "version": "2.14.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pyperclip"
+      },
+      "version": "1.11.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pytest"
+      },
+      "version": "9.1.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pytest-asyncio"
+      },
+      "version": "1.4.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pytest-httpx"
+      },
+      "version": "0.36.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "python-dotenv"
+      },
+      "version": "1.2.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "python-json-logger"
+      },
+      "version": "4.2.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "python-multipart"
+      },
+      "version": "0.0.32"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pywin32"
+      },
+      "version": "312"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pywin32-ctypes"
+      },
+      "version": "0.2.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pyyaml"
+      },
+      "version": "6.0.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "redis"
+      },
+      "version": "8.1.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "referencing"
+      },
+      "version": "0.37.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "requests"
+      },
+      "version": "2.34.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "responses"
+      },
+      "version": "0.26.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "rich"
+      },
+      "version": "15.0.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "rich-rst"
+      },
+      "version": "2.1.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "rpds-py"
+      },
+      "version": "2026.6.3"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "ruff"
+      },
+      "version": "0.15.12"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "secretstorage"
+      },
+      "version": "3.5.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "shellingham"
+      },
+      "version": "1.5.4"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "sniffio"
+      },
+      "version": "1.3.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "sse-starlette"
+      },
+      "version": "3.4.11"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "starlette"
+      },
+      "version": "1.6.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "tqdm"
+      },
+      "version": "4.70.1"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "truststore"
+      },
+      "version": "0.10.4"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "typer"
+      },
+      "version": "0.27.2"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "typing-extensions"
+      },
+      "version": "4.16.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "typing-inspection"
+      },
+      "version": "0.4.4"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "tzdata"
+      },
+      "version": "2026.4"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "uncalled-for"
+      },
+      "version": "0.4.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "urllib3"
+      },
+      "version": "2.8.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "uvicorn"
+      },
+      "version": "0.53.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "watchfiles"
+      },
+      "version": "1.3.0"
+    },
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "websockets"
+      },
+      "version": "17.1"
+    }
+  ],
+  "results": [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {}
+  ],
+  "scanned_at": "2026-09-21T14:55:04.525604+00:00"
+}
