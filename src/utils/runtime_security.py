@@ -9,8 +9,9 @@ logger = get_logger("runtime_security")
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
-_PATH_TOKEN_PLACEHOLDERS = {
+KNOWN_PLACEHOLDERS = {
     "your-strong-secret-here",
+    "your-strong-stable-secret-here",
     "your-32-byte-hex-secret-here",
 }
 
@@ -58,6 +59,15 @@ def positive_int_env(name: str, *, default: int) -> int:
     return value
 
 
+def validate_secret(name: str, value: str, *, minimum_bytes: int = 32) -> None:
+    """Reject documented placeholders and undersized secret material."""
+    normalized = value.strip()
+    if normalized.lower() in KNOWN_PLACEHOLDERS:
+        raise RuntimeError(f"{name} uses a known placeholder")
+    if len(normalized.encode("utf-8")) < minimum_bytes:
+        raise RuntimeError(f"{name} must contain at least {minimum_bytes} bytes")
+
+
 def is_loopback_host(host: str) -> bool:
     """Return True for localhost and every IPv4 or IPv6 loopback address."""
     normalized = host.strip().lower()
@@ -72,18 +82,16 @@ def is_loopback_host(host: str) -> bool:
 def validate_runtime_security(host: str) -> None:
     """Reject remotely reachable authentication bypasses unless overridden."""
     positive_int_env("OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY", default=8)
+    auth_mode = os.getenv("OPENBRIDGE_AUTH_MODE", "refresh_token").strip().lower()
+    if auth_mode == "oauth_proxy" and not is_loopback_host(host):
+        validate_secret("MCP_JWT_SIGNING_KEY", os.getenv("MCP_JWT_SIGNING_KEY", ""))
     if path_tokens_enabled():
-        auth_mode = os.getenv("OPENBRIDGE_AUTH_MODE", "refresh_token").strip().lower()
         if auth_mode != "refresh_token":
             raise RuntimeError(
                 "MCP path tokens are supported only in OPENBRIDGE_AUTH_MODE=refresh_token"
             )
         secret = os.getenv("MCP_PATH_TOKEN_SECRET", "").strip()
-        if secret in _PATH_TOKEN_PLACEHOLDERS or len(secret.encode()) < 32:
-            raise RuntimeError(
-                "MCP_PATH_TOKEN_SECRET must contain at least 32 bytes of "
-                "non-placeholder secret material when path tokens are enabled"
-            )
+        validate_secret("MCP_PATH_TOKEN_SECRET", secret)
         for name in ("MCP_PATH_TOKEN_TTL_DAYS", "MCP_PATH_TOKEN_MAX_AGE_DAYS"):
             raw = os.getenv(name, "7")
             try:

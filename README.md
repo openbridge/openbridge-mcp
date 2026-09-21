@@ -206,7 +206,7 @@ Required for server and tools to function. Values typically point to your enviro
   - `MCP_PATH_TOKEN_MAX_AGE_DAYS` (optional, default `7`, maximum `7`): Maximum accepted token age and `exp - iat` lifetime.
 - Authentication — OAuth Proxy Mode (`OPENBRIDGE_AUTH_MODE=oauth_proxy`)
   - `MCP_BASE_URL` (**required in production**): Externally-reachable base URL of this server, used by FastMCP to construct the OAuth redirect URI. Must match the URL your MCP clients and browsers use to reach the server. Example: `https://mcp.yourcompany.com`. Defaults to `http://{MCP_HOST}:{MCP_PORT}` — always override this when running behind a reverse proxy.
-  - `MCP_JWT_SIGNING_KEY` (recommended): Stable secret used by FastMCP to sign the session tokens it issues to MCP clients. If unset, a random key is generated per process start and all active MCP sessions break on server restart. Set to any strong, stable secret for production deployments.
+  - `MCP_JWT_SIGNING_KEY`: Stable secret used by FastMCP to sign session tokens. It is required when OAuth proxy mode binds beyond loopback, must contain at least 32 bytes, and cannot be a documented placeholder. Generate one with `openssl rand -hex 32`. Loopback development may omit it and use an ephemeral key.
   - `OPENBRIDGE_OAUTH_CLIENT_ID` (optional, default `openbridge-mcp`): Client ID sent to Openbridge's OAuth introspection endpoint. The endpoint reads credentials from embedded secrets, so this value is forwarded but typically not validated. Override only if explicitly required.
   - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `not-used`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
   - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default empty): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets — leave empty unless instructed otherwise.
@@ -288,9 +288,8 @@ OPENBRIDGE_AUTH_MODE=oauth_proxy
 # Must match the URL your clients use to reach this server.
 MCP_BASE_URL=https://mcp.yourcompany.com
 
-# Stable signing key for FastMCP session tokens — sessions break on
-# restart if this is not set. Use any strong, stable secret.
-MCP_JWT_SIGNING_KEY=your-strong-stable-secret-here
+# Generate a stable signing key with: openssl rand -hex 32
+MCP_JWT_SIGNING_KEY=
 
 # Introspection credentials — defaults work for most Openbridge deployments
 # OPENBRIDGE_OAUTH_CLIENT_ID=openbridge-mcp

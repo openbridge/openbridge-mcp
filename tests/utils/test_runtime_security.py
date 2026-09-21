@@ -10,6 +10,7 @@ from src.utils.runtime_security import (
     is_loopback_host,
     positive_int_env,
     require_client_auth_enabled,
+    validate_secret,
     validate_runtime_security,
 )
 
@@ -199,3 +200,35 @@ def test_positive_int_env_accepts_positive_value(monkeypatch):
 )
 def test_is_loopback_host(host, expected):
     assert is_loopback_host(host) is expected
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [None, "short", "your-strong-secret-here", "your-strong-stable-secret-here"],
+)
+def test_remote_oauth_proxy_requires_strong_signing_key(monkeypatch, secret):
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "oauth_proxy")
+    if secret is None:
+        monkeypatch.delenv("MCP_JWT_SIGNING_KEY", raising=False)
+    else:
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", secret)
+
+    with pytest.raises(RuntimeError, match="MCP_JWT_SIGNING_KEY"):
+        validate_runtime_security("0.0.0.0")
+
+
+def test_remote_oauth_proxy_accepts_32_byte_signing_key(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "oauth_proxy")
+    monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "s" * 32)
+    validate_runtime_security("0.0.0.0")
+
+
+def test_loopback_oauth_proxy_allows_ephemeral_signing_key(monkeypatch):
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "oauth_proxy")
+    monkeypatch.delenv("MCP_JWT_SIGNING_KEY", raising=False)
+    validate_runtime_security("127.0.0.1")
+
+
+def test_validate_secret_accepts_multibyte_minimum():
+    validate_secret("TEST_SECRET", "🔐" * 8)
