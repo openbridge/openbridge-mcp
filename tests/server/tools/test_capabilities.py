@@ -1,3 +1,5 @@
+import pytest
+
 from src.server.tools import capabilities
 from src.server.tools.tool_manifest import TOOL_MANIFEST
 
@@ -23,6 +25,7 @@ def test_build_capabilities_marks_query_tools_disabled_without_sampling_key(monk
 def test_build_capabilities_marks_query_tools_enabled_with_sampling_key(monkeypatch):
     monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-key")
     monkeypatch.setenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "true")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
     monkeypatch.delenv("CODE_MODE", raising=False)
     registered = set(TOOL_MANIFEST.keys())
 
@@ -49,6 +52,21 @@ def test_build_capabilities_marks_execute_query_not_installed_when_disabled(monk
     assert "validate_query" in names
     assert "execute_query" not in names
     assert "execute_query" in result["not_installed"]
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+def test_query_execution_requires_explicit_true(monkeypatch, value):
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", value)
+    assert capabilities.query_execution_enabled() is True
+
+
+@pytest.mark.parametrize("value", [None, "", "false", "0", "no", "garbage"])
+def test_query_execution_defaults_off(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
+    else:
+        monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", value)
+    assert capabilities.query_execution_enabled() is False
 
 
 # ---------------------------------------------------------------------------

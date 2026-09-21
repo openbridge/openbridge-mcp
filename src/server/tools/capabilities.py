@@ -19,11 +19,21 @@ def _env_present(name: str) -> bool:
     return bool(value and value.strip())
 
 
+def query_execution_enabled() -> bool:
+    """Return True only when query execution is explicitly enabled."""
+    return os.getenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
     """Build capability metadata for the current MCP runtime."""
     has_sampling_key = _env_present("FASTMCP_SAMPLING_API_KEY") or _env_present("OPENAI_API_KEY")
     llm_opt_in = os.getenv("OPENBRIDGE_ENABLE_LLM_VALIDATION", "false").lower() == "true"
-    query_execution_enabled = os.getenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true").lower() == "true"
+    query_enabled = query_execution_enabled()
 
     tools: List[Dict[str, Any]] = []
     not_installed: List[str] = []
@@ -45,7 +55,7 @@ def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
         elif tool_name == "execute_query":
             tool["requires_env"] = ["FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY"]
             tool["llm_opt_in_required"] = True
-            tool["query_execution_enabled"] = query_execution_enabled
+            tool["query_execution_enabled"] = query_enabled
 
         tools.append(tool)
 
@@ -67,7 +77,7 @@ def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
             "sampling_key_present": has_sampling_key,
             "llm_validation_enabled": llm_opt_in,
             "code_mode_enabled": is_code_mode_enabled(),
-            "query_execution_enabled": query_execution_enabled,
+            "query_execution_enabled": query_enabled,
         },
         "openbridge_envelope": {
             "contract_version": 1,

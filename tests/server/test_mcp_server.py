@@ -74,6 +74,7 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
 
     # Set an API key to enable query validation tools
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
@@ -191,6 +192,7 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     # Set FASTMCP_SAMPLING_API_KEY instead of OPENAI_API_KEY
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
@@ -202,6 +204,26 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     # validate_query and execute_query should be registered with FASTMCP_SAMPLING_API_KEY
     assert "validate_query" in server.registered_tools
     assert "execute_query" in server.registered_tools
+
+
+def test_query_execution_defaults_disabled(monkeypatch):
+    fake_config = FakeAuthConfig()
+    monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
+    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
+    monkeypatch.setattr(
+        mcp_server,
+        "create_auth_middleware",
+        lambda *args, **kwargs: [object()],
+    )
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert "validate_query" in server.registered_tools
+    assert "execute_query" not in server.registered_tools
 
 
 def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
@@ -358,6 +380,7 @@ def test_registered_tools_match_manifest_with_sampling_key(monkeypatch):
     TOOL_MANIFEST keyset — no orphan tools, no missing registrations."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
 
     server = _build_server_with_defaults(monkeypatch)
 
@@ -396,6 +419,7 @@ def test_no_orphan_manifest_entries(monkeypatch):
 
     # Regime 2 — sampling key present
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
     with_key_tools = set(_build_server_with_defaults(monkeypatch).registered_tools)
 
     reachable = no_key_tools | with_key_tools

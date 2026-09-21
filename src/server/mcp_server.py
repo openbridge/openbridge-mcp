@@ -110,13 +110,6 @@ def _is_async_callable(func: Callable[..., Any]) -> bool:
     return inspect.iscoroutinefunction(target)
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _async_wrap(sync_func: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap a synchronous tool implementation in an async coroutine.
 
@@ -235,7 +228,7 @@ def create_mcp_server() -> FastMCP:
     # Service Tools
     # Query validation tools require an API key for LLM sampling
     has_sampling_key = os.getenv("FASTMCP_SAMPLING_API_KEY") or os.getenv("OPENAI_API_KEY")
-    query_execution_enabled = _env_flag("OPENBRIDGE_ENABLE_QUERY_EXECUTION", default=True)
+    query_execution_enabled = capabilities_tools.query_execution_enabled()
     if has_sampling_key:
         register_tool("validate_query", service_tools.validate_query)
         if query_execution_enabled:

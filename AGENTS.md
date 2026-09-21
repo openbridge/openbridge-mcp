@@ -245,10 +245,10 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
   - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default `""`): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets; leave empty unless instructed otherwise.
 
 - **Query Validation (AI-powered)**
-  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable `validate_query` and `execute_query` tools
-    - Without this, query validation tools are not registered
-  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `true`): Controls `execute_query` registration independently
-    - When `false`, `validate_query` remains available but `execute_query` is not registered
+  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): A real key enables `validate_query` and is also required for `execute_query`
+    - Without a key, neither query tool is registered
+  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `false`): Explicitly opts in to `execute_query` registration
+    - Execution requires both this flag set to `true` and a real sampling API key; `validate_query` can remain available without execution
   - SQL validation calls the OpenAI Responses API directly because FastMCP 4 removed server-initiated context sampling
   - `FASTMCP_SAMPLING_MODEL` (optional, default `gpt-4o-mini`): OpenAI model for query validation
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint

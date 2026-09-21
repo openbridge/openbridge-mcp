@@ -190,8 +190,8 @@ Required for server and tools to function. Values typically point to your enviro
   - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `not-used`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
   - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default empty): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets — leave empty unless instructed otherwise.
 - Query Validation (AI-powered)
-  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): Required to enable the `validate_query` and `execute_query` tools. These tools call the OpenAI Responses API directly to validate SQL queries for read-only operations, LIMIT clauses, and related safety checks. Without this key, query validation tools will not be available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
-  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `true`): Controls registration of the `execute_query` tool independently of `validate_query`. Set to `false` to keep validation-only mode enabled.
+  - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): A real key enables `validate_query` and is also required for `execute_query`. These tools call the OpenAI Responses API directly to validate SQL queries for read-only operations, LIMIT clauses, and related safety checks. Without a key, neither query tool is available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
+  - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `false`): Explicitly opts in to registering `execute_query`. Execution requires both this flag set to `true` and a real sampling API key; validation can remain available without execution.
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint for query validation.
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Explicitly opt in to sending SQL text to the configured OpenAI-compatible endpoint for validation. When disabled the server uses heuristics only.
@@ -226,13 +226,13 @@ MCP_PATH_TOKEN_SECRET=your-32-byte-hex-secret-here
 
 # Opt-in to AI validation; by default only heuristics run and no SQL leaves your environment
 OPENBRIDGE_ENABLE_LLM_VALIDATION=false
-# Optional hard gate for query execution tool registration
-OPENBRIDGE_ENABLE_QUERY_EXECUTION=true
+# Explicit opt-in required for query execution tool registration
+OPENBRIDGE_ENABLE_QUERY_EXECUTION=false
 
-# Query validation (AI-powered) - required for validate_query and execute_query tools
-FASTMCP_SAMPLING_API_KEY=sk-proj-xxxxxxxxxxxxx
+# A real key enables validate_query and is also required for execute_query
+# FASTMCP_SAMPLING_API_KEY=
 # or use OPENAI_API_KEY if you prefer
-# OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
+# OPENAI_API_KEY=
 
 # Code mode (default true). Set false to expose full direct tool catalog.
 CODE_MODE=true
@@ -542,7 +542,7 @@ MCP: Calls execute_query(query="SELECT * FROM orders_master... LIMIT 100",
   - The server starts successfully even without `OPENBRIDGE_REFRESH_TOKEN`, enabling pure client-side authentication deployments.
 - Query validation (AI-powered)
   - The `validate_query` and `execute_query` tools always run heuristic validation when available.
-  - These tools are only available when `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` is configured in your environment.
+  - `validate_query` is available when `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` is configured. `execute_query` additionally requires `OPENBRIDGE_ENABLE_QUERY_EXECUTION=true`.
   - LLM-assisted validation is opt-in only and requires `OPENBRIDGE_ENABLE_LLM_VALIDATION=true`.
   - With opt-in enabled, SQL text may be sent to your configured OpenAI-compatible endpoint.
   - The AI validation checks for: read-only operations, proper LIMIT clauses, suspicious patterns, and SQL injection risks.

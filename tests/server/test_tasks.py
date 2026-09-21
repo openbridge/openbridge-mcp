@@ -68,9 +68,11 @@ def _build_server(monkeypatch, *, api_key: bool = True) -> FakeFastMCP:
     """
     if api_key:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
     else:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
+        monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: FakeAuthConfig())
     monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
