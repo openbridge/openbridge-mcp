@@ -305,7 +305,6 @@ def create_mcp_server() -> FastMCP:
         return JSONResponse({
             "status": "healthy",
             "service": "openbridge-mcp",
-            "version": _get_service_version(),
         })
 
     if is_code_mode_enabled():

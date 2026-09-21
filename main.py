@@ -9,7 +9,11 @@ from dotenv import load_dotenv
 from src.auth.path_token_middleware import PathTokenMiddleware, load_secret
 from src.server.mcp_server import create_mcp_server
 from src.utils.logging import get_logger
-from src.utils.runtime_security import path_tokens_enabled, validate_runtime_security
+from src.utils.runtime_security import (
+    path_tokens_enabled,
+    positive_int_env,
+    validate_runtime_security,
+)
 
 logger = get_logger("main")
 
@@ -43,10 +47,11 @@ def main():
         # Load environment variables
         env_path = '.env'
         load_dotenv(env_path)
-        MCP_PORT = int(os.getenv('MCP_PORT', 8000))
-        MCP_HOST = os.getenv('MCP_HOST', '0.0.0.0')
-        validate_runtime_security(MCP_HOST)
+        mcp_port = int(os.getenv('MCP_PORT', 8000))
+        mcp_host = os.getenv('MCP_HOST', '0.0.0.0')
+        validate_runtime_security(mcp_host)
         stateless_http = _stateless_http_enabled()
+        limit_concurrency = positive_int_env("MCP_LIMIT_CONCURRENCY", default=100)
 
         # Create and run MCP server
         server = create_mcp_server()
@@ -58,7 +63,13 @@ def main():
         if path_tokens_enabled():
             # Path-token handling must remain outside Starlette routing.
             app = PathTokenMiddleware(app, secret=load_secret())
-        uvicorn.run(app, host=MCP_HOST, port=MCP_PORT, lifespan="on")
+        uvicorn.run(
+            app,
+            host=mcp_host,
+            port=mcp_port,
+            lifespan="on",
+            limit_concurrency=limit_concurrency,
+        )
 
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

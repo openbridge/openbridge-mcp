@@ -191,6 +191,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
 - **Server**
   - `MCP_PORT` (default `8000`): Port for HTTP MCP server
   - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the HTTP MCP server
+  - `MCP_LIMIT_CONCURRENCY` (optional, default `100`): Uvicorn open-connection cap; excess requests receive HTTP 503. SSE streams count toward it, so tune from observed concurrent sessions. Caddy caps request bodies at 1 MB and removes request URIs from access logs; production per-IP/principal rate limiting belongs at the ingress or WAF.
   - `MCP_STATELESS_HTTP` (optional, default `true`): Run FastMCP HTTP transport in stateless mode (fresh transport per request)
     - Default `true` is safe for multi-instance deployments behind an L7 LB without sticky sessions
     - Set `false` only if you need streamable HTTP session reuse and have session affinity guaranteed

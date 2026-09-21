@@ -406,9 +406,7 @@ def test_production_shaped_opt_in_registers_privileged_tools(monkeypatch):
 
 
 def test_health_endpoint_returns_documented_shape(monkeypatch):
-    """Lock the /health JSON contract: status, service, version. Load
-    balancers and uptime monitors depend on these field names."""
-    monkeypatch.setattr(mcp_server, "version", lambda _: "9.9.9")
+    """The public health response is stable and discloses no version."""
     server = _build_server_with_defaults(monkeypatch)
 
     handler = server.custom_routes["/health"]["func"]
@@ -419,8 +417,8 @@ def test_health_endpoint_returns_documented_shape(monkeypatch):
     assert body == {
         "status": "healthy",
         "service": "openbridge-mcp",
-        "version": "9.9.9",
     }
+    assert "version" not in body
 
 
 def test_no_orphan_manifest_entries(monkeypatch):

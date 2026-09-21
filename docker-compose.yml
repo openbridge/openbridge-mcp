@@ -64,6 +64,7 @@ services:
       # The application must listen on the compose network; Caddy remains
       # the only published ingress.
       MCP_HOST: 0.0.0.0
+      MCP_LIMIT_CONCURRENCY: ${MCP_LIMIT_CONCURRENCY:-100}
       # Docket / FastMCP background-tasks backend. Internal compose DNS
       # resolves "redis" to the sidecar above. No public ingress.
       FASTMCP_DOCKET_URL: redis://redis:6379/0

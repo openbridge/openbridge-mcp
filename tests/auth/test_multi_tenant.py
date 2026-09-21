@@ -47,6 +47,26 @@ from src.auth.simple import OpenbridgeAuth
 from src.server.tools import base as base_tools
 
 
+@pytest.mark.parametrize(("configured", "expected"), [("75", 75), (None, 100)])
+def test_main_passes_concurrency_limit_to_uvicorn(monkeypatch, configured, expected):
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+    monkeypatch.delenv("MCP_PATH_TOKEN_ENABLED", raising=False)
+    if configured is None:
+        monkeypatch.delenv("MCP_LIMIT_CONCURRENCY", raising=False)
+    else:
+        monkeypatch.setenv("MCP_LIMIT_CONCURRENCY", configured)
+    captured = {}
+    fake_server = SimpleNamespace(http_app=lambda **_kwargs: object())
+    monkeypatch.setattr(main, "load_dotenv", lambda _path: None)
+    monkeypatch.setattr(main, "create_mcp_server", lambda: fake_server)
+    monkeypatch.setattr(main, "validate_runtime_security", lambda _host: None)
+    monkeypatch.setattr(main.uvicorn, "run", lambda _app, **kwargs: captured.update(kwargs))
+
+    main.main()
+
+    assert captured["limit_concurrency"] == expected
+
+
 # ---------------------------------------------------------------------------
 # Shared fakes
 # ---------------------------------------------------------------------------
