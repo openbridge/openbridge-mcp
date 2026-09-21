@@ -61,6 +61,9 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # The application must listen on the compose network; Caddy remains
+      # the only published ingress.
+      MCP_HOST: 0.0.0.0
       # Docket / FastMCP background-tasks backend. Internal compose DNS
       # resolves "redis" to the sidecar above. No public ingress.
       FASTMCP_DOCKET_URL: redis://redis:6379/0
@@ -71,10 +74,11 @@ services:
       # When this is true, requests without an Authorization: Bearer
       # header are rejected with McpError(-32001) instead of silently
       # executing as the OPENBRIDGE_REFRESH_TOKEN principal. Operators
-      # running a single-tenant install can override by setting
-      # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false in `.env`. See README.md
-      # → "Per-client authentication".
+      # running a deliberately isolated single-tenant container can set
+      # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false only together with the explicit
+      # insecure-remote override below. See README.md → "Per-client authentication".
       OPENBRIDGE_REQUIRE_CLIENT_AUTH: ${OPENBRIDGE_REQUIRE_CLIENT_AUTH:-true}
+      OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH: ${OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH:-false}
       # Auth mode: "refresh_token" (default) uses the Bearer-token exchange
       # middleware. "oauth_proxy" activates FastMCP's built-in OAuthProxy,
       # which proxies the full OAuth 2.0 flow to Openbridge's auth service

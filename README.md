@@ -21,19 +21,28 @@ MCP_PORT=8000
 OPENBRIDGE_REFRESH_TOKEN=<your_account_id>:<your_token>
 ```
 
-For local single-tenant use, also add:
+For native local single-tenant fallback, also add:
 
 ```bash
+MCP_HOST=127.0.0.1
 OPENBRIDGE_REQUIRE_CLIENT_AUTH=false
 ```
 
+Docker containers must listen on `0.0.0.0`. A deliberately isolated,
+single-tenant container that uses the server token therefore also requires
+`OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true`. This escape hatch permits
+unauthenticated requests to execute as the server principal; never use it for
+a shared or publicly reachable application port.
+
 ### 2. Start the server with Docker
 
-For **local development** (no TLS, no Caddy — just the MCP server and Redis):
+For **local development** with server-token fallback (no TLS, no Caddy — just
+the MCP server and Redis), bind the published port to loopback and enable the
+container compatibility escape hatch in `.env`:
 
 ```bash
 docker compose up --build -d redis
-docker compose run -d -p 8000:8000 --name openbridge-mcp openbridge-mcp
+OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true docker compose run -d -p 127.0.0.1:8000:8000 --name openbridge-mcp openbridge-mcp
 ```
 
 Verify it's running:
@@ -116,30 +125,37 @@ https://mcp.yourdomain.com/mcp
 ---
 
 ## Deployment
-Detailed below are setup and configuration instructions for a local machine, but the same steps can be taken to deploy the MCP on a remote server hosted on [AWS Fargate/EC2](https://aws.amazon.com/fargate), [Google Cloud Plaform (GCP)](https://cloud.google.com/blog/topics/developers-practitioners/build-and-deploy-a-remote-mcp-server-to-google-cloud-run-in-under-10-minutes), or any other remote server technology that best fits your environment.
+
+Local and remote deployments have different trust boundaries. Remote deployments
+must use authenticated TLS ingress and keep the application port private; use the
+bundled Caddy topology below or an equivalent authenticated reverse proxy.
 
 ### Docker deployment
 1. Create a `.env` file at the project root with the variables listed below. The compose file mounts it into the container at `/app/.env`.
 2. Build and start the stack: `docker compose up --build -d`
-   - The compose file maps `8000:8000`; update both the port mapping and `MCP_PORT` in `.env` if you need a different port.
+   - Caddy publishes ports 80 and 443 for ACME and TLS traffic. The application port is exposed only to the Compose network.
    - The stack also starts a small **Redis sidecar** that backs FastMCP's background-task queue (see *Topology* below).
 3. Check logs with `docker compose logs -f openbridge-mcp` until you see “FastMCP server listening”.
-4. Connect your MCP client to your server. If you did this locally, the address would look like: `http://localhost:8000/mcp` (or the port you chose). Running this on a remote server on Cloudflare, the URL would look like `https://mcp-openbridge-mcp.6fdec1c7650b77137a09f6fa4f2c9ca8.workers.dev`.
+4. Connect your MCP client to `https://${MCP_DOMAIN}/mcp`. Caddy redirects port 80 to TLS and is the only public entry point.
 
-If you need as Intel/AMD compatable environment, you can build for both like this: `docker buildx build --platform linux/amd64,linux/arm64 -t openbridgeops/openbridge-mcp:latest .` and then start it with `docker run --env-file .env -p 8000:8000 --name openbridge-mcp openbridge-mcp`. Add `--restart unless-stopped` if you want it to survive host restarts.
+For Intel/AMD and ARM images, build both platforms with `docker buildx build --platform linux/amd64,linux/arm64 -t openbridgeops/openbridge-mcp:latest .`. Deploy the image behind TLS ingress with the application port private.
 
 #### Topology
 
 ```
                 ┌──────────────────────────┐
-   client ──►   │  openbridge-mcp:${PORT}  │  (only public ingress)
-                │  Code Mode meta-tools    │
-                │  + FastMCP tasks worker  │
+   client ──►   │ Caddy TLS ingress :443   │  (public)
+                └──────┬───────────────────┘
+                       │  compose-private HTTP
+                       ▼
+                ┌──────────────────────────┐
+                │  openbridge-mcp:${PORT}  │  (not published)
+                │  Code Mode + task worker │
                 └──────┬───────────────────┘
                        │  redis://redis:6379/0
                        ▼  (compose-internal DNS)
                 ┌──────────────────────────┐
-                │  redis:7-alpine          │  (no published ports)
+                │  redis:7.4.5-alpine      │  (no published ports)
                 │  AOF → redis-data volume │
                 └──────────────────────────┘
 ```
@@ -152,16 +168,17 @@ As a prerequisite, we recommend using [**uv**](https://docs.astral.sh/uv/) to cr
 1. Create a `.env` in the project's root folder (see Variables below). At minimum set `MCP_PORT`. Optionally set `OPENBRIDGE_REFRESH_TOKEN` for server-side authentication (clients can also provide tokens via Authorization headers).
 2. Run the command `uv venv --python 3.13 && uv pip install -e ".[dev]"`
 3. Start the server:
-   - Python: `python main.py`
-   - The server listens on `${MCP_HOST:-0.0.0.0}:${MCP_PORT}` using HTTP transport.
+   - Authenticated: `MCP_HOST=127.0.0.1 python main.py`
+   - Debug without auth: `MCP_HOST=127.0.0.1 AUTH_ENABLED=false python main.py`
+   - Remote binds fail at startup when authentication is disabled or a server-token fallback is reachable, unless the dangerous compatibility override is explicit.
 4. Connect from an MCP client.
 
 ### Environment variables (.env)
 Required for server and tools to function. Values typically point to your environment (dev/stage/prod) of Openbridge APIs.
 
 - Server
-  - `MCP_PORT` (default `8000`): Port for the HTTP MCP server. The container exposes `8000` internally; `docker-compose.yml` publishes it as `${MCP_PORT:-8000}` on the host, so set `MCP_PORT` in `.env` if you need a different host port.
-  - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the MCP server.
+  - `MCP_PORT` (default `8000`): Internal HTTP port for the MCP server. Compose exposes it only to Caddy on the private network; ports 80 and 443 are the public ingress.
+  - `MCP_HOST` (optional, default `0.0.0.0`): Host/interface to bind the MCP server. Use `127.0.0.1` for native local development; Compose explicitly uses `0.0.0.0` behind private TLS ingress.
   - `MCP_STATELESS_HTTP` (optional, default `true`): Run FastMCP's HTTP transport in stateless mode (a fresh transport per request). The default is safe for multi-instance deployments behind an L7 load balancer without sticky sessions. Set to `false` only if your deployment needs streamable HTTP session reuse and you can guarantee session affinity.
 - Background tasks (SEP-2663)
   - `FASTMCP_DOCKET_URL` (default in compose: `redis://redis:6379/0`): Docket backend URL. The bundled Redis sidecar is reachable only on the compose-internal network; the openbridge-mcp container resolves `redis` via Docker DNS and is the only ingress to Redis. Use `memory://` for a single-process dev run with no compose file (tasks won't survive restart).
@@ -177,7 +194,8 @@ Required for server and tools to function. Values typically point to your enviro
     - `refresh_token` (default): `OpenbridgeAuthMiddleware` extracts `Authorization: Bearer` headers, exchanges Openbridge refresh tokens (`xxx:yyy`) for short-lived JWTs, and caches results per-tenant. See below for single- vs multi-tenant config.
     - `oauth_proxy`: FastMCP's built-in `OAuthProxy` takes over. The server advertises OAuth 2.0 metadata, proxies the authorization code flow to Openbridge's auth service, and verifies access tokens via token introspection. MCP clients authenticate through a browser-based OAuth flow rather than passing raw tokens. See [OAuth Proxy Mode](#oauth-proxy-mode) below.
   - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication (`refresh_token` mode only). When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
-  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Required for multi-tenant deployments** (`refresh_token` mode). When `true`, requests that arrive without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`. Prevents cross-tenant data leakage by ensuring every tool call runs under the caller's own credential. Leave `false` for single-tenant or local-dev installs. Not applicable in `oauth_proxy` mode — the OAuthProxy enforces authentication at the transport layer.
+  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `true`): Requests without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`. Set `false` only for intentional single-tenant server-token fallback on a loopback bind. Not applicable in `oauth_proxy` mode, where OAuthProxy enforces transport authentication.
+  - `OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH` (optional, default `false`): Dangerous compatibility escape hatch permitting `AUTH_ENABLED=false` or server-token fallback on a non-loopback bind. Use only when the application port is otherwise isolated for one trusted tenant; startup emits a prominent warning.
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
   - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings (`refresh_token` mode only). Raise this for deployments that serve more concurrent tenants than the default. Lower it to constrain memory in resource-tight environments. Eviction is LRU, so active tenants stay resident under churn.
 - Authentication — URL-Embedded Auth / Path Tokens (`refresh_token` mode only)
@@ -206,7 +224,8 @@ Example `.env` template (refresh_token mode — the default):
 ```bash
 # Server settings
 MCP_PORT=8000
-# MCP_HOST=0.0.0.0
+# Native local fallback must use loopback
+MCP_HOST=127.0.0.1
 
 # Required for Docker Compose; encrypts task context persisted in Redis
 # Generate with: openssl rand -hex 32
@@ -216,8 +235,12 @@ FASTMCP_TASKS_ENCRYPTION_KEY=
 OPENBRIDGE_REFRESH_TOKEN=xxx:yyy
 # Optional timeout in seconds (connect timeout fixed at 10s)
 OPENBRIDGE_API_TIMEOUT=45
-# Required for multi-tenant deployments; rejects requests without a Bearer header
-# OPENBRIDGE_REQUIRE_CLIENT_AUTH=true
+# Safe default: reject requests without a caller-provided Bearer header
+OPENBRIDGE_REQUIRE_CLIENT_AUTH=true
+# Local single-tenant fallback only:
+# OPENBRIDGE_REQUIRE_CLIENT_AUTH=false
+# Dangerous non-loopback container compatibility override:
+# OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true
 
 # URL-Embedded Auth (Claude custom connectors) — shared HS256 secret for path tokens
 # Generate with: openssl rand -hex 32
@@ -551,10 +574,11 @@ MCP: Calls execute_query(query="SELECT * FROM orders_master... LIMIT 100",
 - Error handling
   - Tools return empty lists or dictionaries with an `error` key when API calls fail; check responses for errors.
 - Networking
-  - Server binds to all interfaces (`0.0.0.0`). Ensure firewall/network rules allow your MCP client to reach `MCP_PORT`.
+  - Native local development should bind `127.0.0.1`. Compose binds the application to `0.0.0.0` only inside its private network and publishes Caddy on ports 80/443.
 - Per-client authentication
-  - **Single-tenant** (one operator, one Openbridge account): `OPENBRIDGE_REFRESH_TOKEN` alone is sufficient. The server exchanges it for short-lived JWTs and uses the same principal for every tool call.
-  - **Multi-tenant** (one shared server instance, many distinct Openbridge accounts): set `OPENBRIDGE_REQUIRE_CLIENT_AUTH=true` so the server rejects any request lacking an `Authorization: Bearer` header. Each client must send its own refresh token (`xxx:yyy`) or unexpired JWT in that header; the server resolves it on a per-request basis and never substitutes the server-side token. Without this flag, an unauthenticated request would silently execute as the server's principal — a cross-tenant data leak.
+  - **Default and multi-tenant**: `OPENBRIDGE_REQUIRE_CLIENT_AUTH=true` rejects requests lacking an `Authorization: Bearer` header. Each client sends its own refresh token (`xxx:yyy`) or unexpired JWT; the server never substitutes the server token.
+  - **Local single-tenant fallback**: set `MCP_HOST=127.0.0.1 OPENBRIDGE_REQUIRE_CLIENT_AUTH=false`. The server exchanges `OPENBRIDGE_REFRESH_TOKEN` and uses that principal for every call.
+  - **Isolated container compatibility**: a container bound to `0.0.0.0` also requires `OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true` for server-token fallback. This explicitly dangerous mode must keep the application port private and emits a startup warning.
   - **URL-embedded auth** (Claude custom connectors): The Openbridge console issues per-user connection URLs with a signed JWT in the path. No header configuration is needed — the server extracts and verifies the token before routing. Requires `MCP_PATH_TOKEN_SECRET` to match the secret used by the console. See [URL-Embedded Auth](#url-embedded-auth-claude-custom-connectors).
   - Layer additional client authentication (network isolation, mTLS proxies, signed client configs, OS-level ACLs) as appropriate for your trust model.
   - Rotate tokens regularly and monitor access logs to detect misuse.

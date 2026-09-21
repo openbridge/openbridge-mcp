@@ -39,11 +39,13 @@ class TestAuthConfig:
     def test_default_config_enabled(self, monkeypatch):
         """Without AUTH_ENABLED env var, auth is enabled by default."""
         monkeypatch.delenv("AUTH_ENABLED", raising=False)
+        monkeypatch.delenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", raising=False)
         config = create_openbridge_config()
         assert config.enabled is True
         assert config.refresh_token_enabled is True
         assert config.jwt_validation_enabled is True
         assert config.jwt_verify_signature is True
+        assert config.require_client_auth is True
 
     def test_auth_disabled_by_env_var(self, monkeypatch):
         """AUTH_ENABLED=false disables authentication."""

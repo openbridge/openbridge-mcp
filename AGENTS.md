@@ -215,11 +215,14 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - When unset: Clients must provide `Authorization: Bearer <token>` headers
     - Client tokens take precedence over server tokens
     - Server starts successfully without this variable, enabling pure client-side auth
-  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `false`): **Multi-tenant safety gate**
+  - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `true`): **Multi-tenant safety gate**
     - When `true`: requests without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`
-    - **Required for any deployment serving more than one Openbridge account** — without it, an unauthenticated request silently executes as the server principal (cross-tenant leak)
-    - Leave `false` for single-tenant or local-dev installs where the server token fallback is intentional
+    - Keep `true` for every shared or remotely reachable deployment
+    - Set `MCP_HOST=127.0.0.1 OPENBRIDGE_REQUIRE_CLIENT_AUTH=false` only when local single-tenant server-token fallback is intentional
     - Backstopped at the tool layer: `src/server/tools/base.py` raises `AuthenticationError` if a tool is invoked without a primed JWT while this flag is on
+  - `OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH` (optional, default `false`): Dangerous compatibility override for a deliberately isolated single-tenant container that must bind `0.0.0.0`
+    - Required when `AUTH_ENABLED=false` or server-token fallback is combined with any non-loopback bind
+    - Never enable on a shared or publicly reachable application port; startup emits a prominent warning
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) for Openbridge HTTP requests
     - Connect timeout is fixed at 10 seconds
   - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings
@@ -545,7 +548,7 @@ Before approving, ask:
 1. Check logs: `docker compose logs -f openbridge-mcp`
 2. Verify env vars: Ensure `.env` has all required variables
 3. Test auth: `OPENBRIDGE_REFRESH_TOKEN` must be in `xxx:yyy` format
-4. Run local: `AUTH_ENABLED=false make serve` to bypass auth during dev
+4. Run local: `MCP_HOST=127.0.0.1 AUTH_ENABLED=false make serve` to bypass auth during dev
 5. Check port: Server runs on `MCP_PORT` (default 8000)
 
 ## Getting Help

@@ -22,6 +22,11 @@ from src.server.tools import capabilities as capabilities_tools  # noqa: E402
 from src.server.tools import skills_meta as skills_meta_tools  # noqa: E402
 from src.server.tools.tool_manifest import TOOL_MANIFEST  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
+from src.utils.runtime_security import (  # noqa: E402
+    env_flag,
+    is_loopback_host,
+    require_client_auth_enabled,
+)
 from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
 from src.auth.manager import get_auth_manager  # noqa: E402
 from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy  # noqa: E402
@@ -79,27 +84,32 @@ def _log_capability_summary(registered_tool_names: set[str]) -> None:
 def _warn_if_server_token_fallback_open() -> None:
     """Emit a startup WARNING when the server-token fallback is reachable.
 
-    Multi-tenant deployments must set ``OPENBRIDGE_REQUIRE_CLIENT_AUTH=true``
-    so requests without a Bearer header are rejected instead of silently
-    executing as the principal of ``OPENBRIDGE_REFRESH_TOKEN``. Today the
-    flag defaults to false (backward-compat for single-tenant installs)
-    — but if an operator has *also* configured a server refresh token,
-    that combination is the cross-tenant leak shape the security review
-    flagged. Surface it loudly at boot rather than waiting for the wrong
-    account to receive someone else's data.
+    Explicit local fallback is supported for single-tenant development.
+    Remote fallback requires a separately named dangerous override and is
+    surfaced with a high-signal warning.
     """
     server_token_set = bool(os.getenv("OPENBRIDGE_REFRESH_TOKEN"))
     if not server_token_set:
         return
-    raw_flag = (os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH") or "").strip().lower()
-    require_client_auth = raw_flag in {"true", "1", "yes", "on"}
-    if require_client_auth:
+    if require_client_auth_enabled():
+        return
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    if not is_loopback_host(host) and env_flag(
+        "OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH",
+        default=False,
+    ):
+        logger.warning(
+            "DANGER: remote server-token fallback is enabled by "
+            "OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true. Unauthenticated "
+            "requests execute as OPENBRIDGE_REFRESH_TOKEN; use only for a "
+            "deliberately isolated single-tenant deployment."
+        )
         return
     logger.warning(
-        "OPENBRIDGE_REFRESH_TOKEN is set but OPENBRIDGE_REQUIRE_CLIENT_AUTH is not enabled. "
-        "Requests without an Authorization: Bearer header will execute as the server principal. "
-        "This is fine for single-tenant deployments; for ANY multi-tenant deployment set "
-        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=true to fail closed and avoid cross-tenant data leakage."
+        "OPENBRIDGE_REFRESH_TOKEN fallback is enabled because "
+        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=false. Keep MCP_HOST on loopback for "
+        "local single-tenant use; remote startup otherwise fails closed, and "
+        "multi-tenant deployments must require client authentication."
     )
 
 def _is_async_callable(func: Callable[..., Any]) -> bool:

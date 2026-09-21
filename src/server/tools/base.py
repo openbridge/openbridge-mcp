@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from inspect import isawaitable
 from typing import Dict, Optional
 from urllib.parse import urljoin, urlparse
@@ -11,21 +10,10 @@ from src.auth.authentication import JWT_CONTEXT_ATTR, JWT_PUBLIC_ATTR
 from src.auth.session_state import get_request_jwt
 from src.auth.simple import AuthenticationError, get_api_timeout, get_auth
 from src.utils.logging import get_logger
+from src.utils.runtime_security import require_client_auth_enabled
 from src.utils.security import ValidationError, validate_url
 
 logger = get_logger("base_tools")
-
-
-def _require_client_auth_enabled() -> bool:
-    """Return True when ``OPENBRIDGE_REQUIRE_CLIENT_AUTH`` is set truthy.
-
-    Read at call time rather than import time so test fixtures can
-    monkeypatch the env per-test without resetting module state.
-    """
-    raw = os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH")
-    if not raw:
-        return False
-    return raw.strip().lower() in {"true", "1", "yes", "on"}
 
 
 def _get_context_jwt(ctx) -> Optional[str]:
@@ -86,7 +74,7 @@ def get_auth_headers(ctx=None) -> Dict[str, str]:
     # an empty header. The middleware is the primary gate, but tools
     # invoked without a request-scoped context (e.g. internal callers,
     # background jobs) must also refuse to leak the server principal.
-    if _require_client_auth_enabled():
+    if require_client_auth_enabled():
         raise AuthenticationError(
             "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled but no per-tenant "
             "JWT was resolved for this call. Refusing to fall back to the "

@@ -8,6 +8,7 @@ from src.auth.simple import AuthenticationError
 
 
 def test_get_auth_headers_without_token(monkeypatch):
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
     monkeypatch.delenv("OPENBRIDGE_REFRESH_TOKEN", raising=False)
     calls = []
 
@@ -25,6 +26,7 @@ def test_get_auth_headers_without_token(monkeypatch):
 
 
 def test_get_auth_headers_converts_refresh_token(monkeypatch):
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "abc:def")
 
     def fake_post(url, json, headers, timeout):
@@ -127,6 +129,7 @@ def test_get_auth_headers_ignores_async_get_state(monkeypatch):
 
 
 def test_get_auth_headers_raises_on_conversion_failure(monkeypatch):
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "abc:def")
 
     def fake_post(*args, **kwargs):

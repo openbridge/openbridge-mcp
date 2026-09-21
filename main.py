@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from src.auth.path_token_middleware import PathTokenMiddleware, load_secret
 from src.server.mcp_server import create_mcp_server
 from src.utils.logging import get_logger
+from src.utils.runtime_security import validate_runtime_security
 
 logger = get_logger("main")
 
@@ -44,6 +45,7 @@ def main():
         load_dotenv(env_path)
         MCP_PORT = int(os.getenv('MCP_PORT', 8000))
         MCP_HOST = os.getenv('MCP_HOST', '0.0.0.0')
+        validate_runtime_security(MCP_HOST)
         stateless_http = _stateless_http_enabled()
 
         # Create and run MCP server
