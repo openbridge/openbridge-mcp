@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Breaking security change: deprecated URL path tokens now default off, work only in `refresh_token` mode, require a unique secret of at least 32 bytes, and enforce required claims plus a seven-day maximum age and lifetime. Existing 30-day URLs older than seven days stop working. The checked production profile uses `oauth_proxy` without a path-token secret, so this rollout has no active production path URLs to migrate; any other issuer must move to seven-day tokens before enabling the compatibility mode.
+
 ## 0.3.4 - 2026-05-01
 
 - Add `list_skills` and `read_skill` meta-tools that bridge the FastMCP resource channel into the tool channel. The bundled skill at `skills/openbridge-mcp/` is published as MCP resources per the FastMCP spec, but tool-only MCP hosts (verified: Claude.ai's MCP host as of 2026-05-01) don't surface the resource channel to the assistant. The two new tools wrap `ctx.fastmcp.list_resources()` / `ctx.fastmcp.read_resource()` so the assistant can `call_tool("list_skills", {})` / `call_tool("read_skill", {"uri": "skill://openbridge-mcp/SKILL.md"})` and get the same content. Both are registered with `task=None` (in-process, no I/O cost). Errors return v1 envelopes (`INVALID_SKILL_URI`, `SKILL_NOT_FOUND`, `MISSING_CONTEXT`).

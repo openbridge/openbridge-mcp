@@ -3,6 +3,8 @@ import logging
 import pytest
 
 import main
+from src.auth.path_token_middleware import PathTokenMiddleware
+from src.utils import runtime_security
 from src.utils.runtime_security import (
     env_flag,
     is_loopback_host,
@@ -90,6 +92,86 @@ def test_main_validates_host_before_server_creation(monkeypatch):
         main.main()
 
     assert seen == ["192.0.2.10"]
+
+
+def test_path_tokens_default_disabled(monkeypatch):
+    monkeypatch.delenv("MCP_PATH_TOKEN_ENABLED", raising=False)
+    assert runtime_security.path_tokens_enabled() is False
+
+
+def test_main_does_not_wrap_path_tokens_by_default(monkeypatch):
+    base_app = object()
+    server = type("Server", (), {"http_app": lambda self, **_kwargs: base_app})()
+    captured = {}
+    monkeypatch.setattr(main, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "validate_runtime_security", lambda _host: None)
+    monkeypatch.setattr(main, "create_mcp_server", lambda: server)
+    monkeypatch.setattr(
+        main,
+        "load_secret",
+        lambda: (_ for _ in ()).throw(AssertionError("secret must not load")),
+    )
+    monkeypatch.setattr(main.uvicorn, "run", lambda app, **_kwargs: captured.update(app=app))
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+    monkeypatch.delenv("MCP_PATH_TOKEN_ENABLED", raising=False)
+
+    main.main()
+
+    assert captured["app"] is base_app
+
+
+def test_main_wraps_path_tokens_when_explicitly_enabled(monkeypatch):
+    base_app = object()
+    server = type("Server", (), {"http_app": lambda self, **_kwargs: base_app})()
+    captured = {}
+    monkeypatch.setattr(main, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "validate_runtime_security", lambda _host: None)
+    monkeypatch.setattr(main, "create_mcp_server", lambda: server)
+    monkeypatch.setattr(main, "load_secret", lambda: "s" * 32)
+    monkeypatch.setattr(main.uvicorn, "run", lambda app, **_kwargs: captured.update(app=app))
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "refresh_token")
+    monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
+
+    main.main()
+
+    assert isinstance(captured["app"], PathTokenMiddleware)
+
+
+def test_path_tokens_rejected_in_oauth_proxy_mode(monkeypatch):
+    monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "oauth_proxy")
+    monkeypatch.setenv("MCP_PATH_TOKEN_SECRET", "s" * 32)
+    with pytest.raises(RuntimeError, match="refresh_token"):
+        validate_runtime_security("127.0.0.1")
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [None, "short", "your-strong-secret-here", "your-32-byte-hex-secret-here"],
+)
+def test_enabled_path_tokens_require_strong_non_placeholder_secret(monkeypatch, secret):
+    monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "refresh_token")
+    if secret is None:
+        monkeypatch.delenv("MCP_PATH_TOKEN_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("MCP_PATH_TOKEN_SECRET", secret)
+
+    with pytest.raises(RuntimeError, match="MCP_PATH_TOKEN_SECRET"):
+        validate_runtime_security("127.0.0.1")
+
+
+@pytest.mark.parametrize("name", ["MCP_PATH_TOKEN_TTL_DAYS", "MCP_PATH_TOKEN_MAX_AGE_DAYS"])
+@pytest.mark.parametrize("value", ["0", "8", "not-an-integer"])
+def test_enabled_path_tokens_reject_invalid_lifetime_settings(monkeypatch, name, value):
+    monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "refresh_token")
+    monkeypatch.setenv("MCP_PATH_TOKEN_SECRET", "s" * 32)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(RuntimeError, match=name):
+        validate_runtime_security("127.0.0.1")
 
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])

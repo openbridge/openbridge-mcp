@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from src.auth.path_token_middleware import PathTokenMiddleware, load_secret
 from src.server.mcp_server import create_mcp_server
 from src.utils.logging import get_logger
-from src.utils.runtime_security import validate_runtime_security
+from src.utils.runtime_security import path_tokens_enabled, validate_runtime_security
 
 logger = get_logger("main")
 
@@ -50,14 +50,14 @@ def main():
 
         # Create and run MCP server
         server = create_mcp_server()
-        secret = load_secret()
         logger.info(
             "Starting MCP server with HTTP transport (stateless_http=%s)",
             stateless_http,
         )
-        # Wrap the FastMCP ASGI app at the outermost level so PathTokenMiddleware intercepts before Starlette routing.
-        mcp_app = server.http_app(stateless_http=stateless_http)
-        app = PathTokenMiddleware(mcp_app, secret=secret)
+        app = server.http_app(stateless_http=stateless_http)
+        if path_tokens_enabled():
+            # Path-token handling must remain outside Starlette routing.
+            app = PathTokenMiddleware(app, secret=load_secret())
         uvicorn.run(app, host=MCP_HOST, port=MCP_PORT, lifespan="on")
 
     except KeyboardInterrupt:
