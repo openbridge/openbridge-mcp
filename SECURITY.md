@@ -1,7 +1,7 @@
 ## Security Posture
 
-This MCP server ships with a streamlined Openbridge authentication flow
-focused on local deployments. Key security behaviors:
+This MCP server supports local and remotely hosted deployments with fail-closed
+runtime validation. Key security behaviors:
 
 ### Token handling (Dual-Mode)
 The server supports two authentication modes:
@@ -26,17 +26,40 @@ The server supports two authentication modes:
   of full contents.
 - Server starts successfully without `OPENBRIDGE_REFRESH_TOKEN`, enabling pure
   client-side authentication deployments.
+- Remote listeners require client authentication by default. Server-principal
+  fallback requires an explicitly dangerous override and should remain private
+  to a deliberately isolated single-tenant deployment.
+- OAuth proxy mode on a remote listener requires a stable non-placeholder
+  signing key containing at least 32 bytes.
 
 ### Network safeguards
 - All HTTP requests use explicit `(connect=10s, read=OPENBRIDGE_API_TIMEOUT)`
   timeouts so an upstream stall cannot hang the MCP indefinitely.
 - Pagination helpers enforce host allowlists to reduce SSRF risk when following
   `links.next` responses.
+- Uvicorn caps open connections with `MCP_LIMIT_CONCURRENCY` (default 100),
+  while the bundled Caddy ingress rejects request bodies over 1 MB and omits
+  request URIs from access logs. Add principal/IP rate limiting at the
+  production ingress or WAF.
 
 ### LLM validation
 - SQL text is only sent to an LLM when
   `OPENBRIDGE_ENABLE_LLM_VALIDATION=true`. By default the server evaluates
   queries with heuristics only.
+- SQL execution is absent unless `OPENBRIDGE_ENABLE_QUERY_EXECUTION=true` and
+  an API key is configured.
+
+### Privileged catalog
+
+Credential-returning and mutation tools are absent by default. Enable them only
+with `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true` for trusted clients with upstream
+authorization. Code Mode can reach enabled privileged operations through its
+single `execute` bridge, so the flag does not replace user confirmation or
+fine-grained authorization.
+
+Legacy credential-bearing path tokens are disabled by default. Their age and
+logging mitigations do not eliminate URL exposure; use normal OAuth or bearer
+headers for new deployments.
 
 ## Security Best Practices
 

@@ -80,6 +80,12 @@ services:
       # insecure-remote override below. See README.md → "Per-client authentication".
       OPENBRIDGE_REQUIRE_CLIENT_AUTH: ${OPENBRIDGE_REQUIRE_CLIENT_AUTH:-true}
       OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH: ${OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH:-false}
+      OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY: ${OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY:-8}
+      OPENBRIDGE_ENABLE_QUERY_EXECUTION: ${OPENBRIDGE_ENABLE_QUERY_EXECUTION:-false}
+      OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS: ${OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS:-false}
+      MCP_PATH_TOKEN_ENABLED: ${MCP_PATH_TOKEN_ENABLED:-false}
+      MCP_PATH_TOKEN_TTL_DAYS: ${MCP_PATH_TOKEN_TTL_DAYS:-7}
+      MCP_PATH_TOKEN_MAX_AGE_DAYS: ${MCP_PATH_TOKEN_MAX_AGE_DAYS:-7}
       # Auth mode: "refresh_token" (default) uses the Bearer-token exchange
       # middleware. "oauth_proxy" activates FastMCP's built-in OAuthProxy,
       # which proxies the full OAuth 2.0 flow to Openbridge's auth service
