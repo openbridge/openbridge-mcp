@@ -44,6 +44,20 @@ def path_tokens_enabled() -> bool:
     return env_flag("MCP_PATH_TOKEN_ENABLED", default=False)
 
 
+def positive_int_env(name: str, *, default: int) -> int:
+    """Read a strictly positive integer or fail startup with a clear error."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive integer") from exc
+    if value < 1:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return value
+
+
 def is_loopback_host(host: str) -> bool:
     """Return True for localhost and every IPv4 or IPv6 loopback address."""
     normalized = host.strip().lower()
@@ -57,6 +71,7 @@ def is_loopback_host(host: str) -> bool:
 
 def validate_runtime_security(host: str) -> None:
     """Reject remotely reachable authentication bypasses unless overridden."""
+    positive_int_env("OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY", default=8)
     if path_tokens_enabled():
         auth_mode = os.getenv("OPENBRIDGE_AUTH_MODE", "refresh_token").strip().lower()
         if auth_mode != "refresh_token":

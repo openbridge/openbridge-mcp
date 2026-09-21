@@ -196,6 +196,7 @@ Required for server and tools to function. Values typically point to your enviro
   - `OPENBRIDGE_REFRESH_TOKEN` (optional): Refresh token for server-side authentication (`refresh_token` mode only). When set, the server exchanges this for JWTs to authenticate API calls. When unset, clients must provide Bearer tokens via `Authorization` headers. If neither is provided, API calls will fail with `401`.
   - `OPENBRIDGE_REQUIRE_CLIENT_AUTH` (optional, default `true`): Requests without an `Authorization: Bearer` header are rejected with `McpError(-32001)` instead of falling back to `OPENBRIDGE_REFRESH_TOKEN`. Set `false` only for intentional single-tenant server-token fallback on a loopback bind. Not applicable in `oauth_proxy` mode, where OAuthProxy enforces transport authentication.
   - `OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH` (optional, default `false`): Dangerous compatibility escape hatch permitting `AUTH_ENABLED=false` or server-token fallback on a non-loopback bind. Use only when the application port is otherwise isolated for one trusted tenant; startup emits a prominent warning.
+  - `OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY` (optional, default `8`): Positive worker limit for refresh-token exchanges. Exchanges use a dedicated bounded executor, separate from FastMCP's sync-tool executor, and concurrent requests for the same credential share one in-flight operation.
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) applied to every Openbridge HTTP request; connect timeouts are fixed at 10 seconds.
   - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings (`refresh_token` mode only). Raise this for deployments that serve more concurrent tenants than the default. Lower it to constrain memory in resource-tight environments. Eviction is LRU, so active tenants stay resident under churn.
 - Authentication — deprecated URL-embedded auth / path tokens (`refresh_token` mode only)
@@ -243,6 +244,8 @@ OPENBRIDGE_REQUIRE_CLIENT_AUTH=true
 # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false
 # Dangerous non-loopback container compatibility override:
 # OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH=true
+# Dedicated bounded refresh-token exchange pool
+OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY=8
 
 # Deprecated URL-embedded auth is disabled by default
 MCP_PATH_TOKEN_ENABLED=false

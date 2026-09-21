@@ -19,6 +19,7 @@ from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from src.utils.runtime_security import env_flag, require_client_auth_enabled
 
+from .exchange_coordinator import TokenExchangeCoordinator
 from .session_state import set_request_jwt
 from .simple import AuthenticationError, OpenbridgeAuth, get_auth, is_refresh_token
 
@@ -128,10 +129,17 @@ class OpenbridgeAuthMiddleware(Middleware):
     server-side ``OPENBRIDGE_REFRESH_TOKEN`` environment variable.
     """
 
-    def __init__(self, auth: OpenbridgeAuth, *, require_client_auth: bool = False):
+    def __init__(
+        self,
+        auth: OpenbridgeAuth,
+        *,
+        require_client_auth: bool = False,
+        exchange_coordinator: TokenExchangeCoordinator | None = None,
+    ):
         super().__init__()
         self._auth = auth
         self._require_client_auth = require_client_auth
+        self._exchange_coordinator = exchange_coordinator or TokenExchangeCoordinator()
 
     async def on_request(self, context: MiddlewareContext, call_next):
         if not context.fastmcp_context:
@@ -164,7 +172,10 @@ class OpenbridgeAuthMiddleware(Middleware):
         # to the server token and returning data for the wrong account.
         if client_token:
             try:
-                jwt_token = self._resolve_client_token(client_token)
+                jwt_token = await self._exchange_coordinator.resolve(
+                    f"client:{client_token}",
+                    lambda: self._resolve_client_token(client_token),
+                )
             except AuthenticationError as exc:
                 logger.warning("Client token exchange failed: %s", exc)
                 raise McpError(
@@ -204,7 +215,10 @@ class OpenbridgeAuthMiddleware(Middleware):
         # into strict per-tenant auth.
         if not jwt_token and not client_token:
             try:
-                jwt_token = self._auth.get_jwt()
+                jwt_token = await self._exchange_coordinator.resolve(
+                    "server",
+                    self._auth.get_jwt,
+                )
                 logger.debug("Using server refresh token to generate JWT")
             except Exception:
                 # Debug level: Some MCP endpoints (health, list tools) don't require auth

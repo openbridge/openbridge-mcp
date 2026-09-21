@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -175,41 +176,47 @@ class _InMemoryLRUTokenCache:
             raise ValueError("max_entries must be >= 1")
         self._max_entries = max_entries
         self._data: OrderedDict[str, _CachedToken] = OrderedDict()
+        self._lock = threading.RLock()
 
     @property
     def max_entries(self) -> int:
         return self._max_entries
 
     def get(self, key: str) -> Optional[_CachedToken]:
-        item = self._data.get(key)
-        if item is None:
-            return None
-        # Touch: a successful read marks this entry MRU.
-        self._data.move_to_end(key)
-        return item
+        with self._lock:
+            item = self._data.get(key)
+            if item is None:
+                return None
+            # Touch: a successful read marks this entry MRU.
+            self._data.move_to_end(key)
+            return item
 
     def set(self, key: str, value: _CachedToken) -> None:
-        if key in self._data:
-            # Update-in-place must also count as a touch.
-            self._data.move_to_end(key)
-        self._data[key] = value
-        # Prune from the LRU end. Use a loop in case the cap was lowered
-        # at runtime (defensive — current code does not lower it).
-        while len(self._data) > self._max_entries:
-            evicted_key, _ = self._data.popitem(last=False)
-            logger.debug(
-                "Token cache LRU evicted: cap=%d", self._max_entries,
-            )
-            del evicted_key  # not logged; PII-like
+        with self._lock:
+            if key in self._data:
+                # Update-in-place must also count as a touch.
+                self._data.move_to_end(key)
+            self._data[key] = value
+            # Prune from the LRU end. Use a loop in case the cap was lowered
+            # at runtime (defensive — current code does not lower it).
+            while len(self._data) > self._max_entries:
+                evicted_key, _ = self._data.popitem(last=False)
+                logger.debug(
+                    "Token cache LRU evicted: cap=%d", self._max_entries,
+                )
+                del evicted_key  # not logged; PII-like
 
     def __contains__(self, key: object) -> bool:
-        return key in self._data
+        with self._lock:
+            return key in self._data
 
     def __len__(self) -> int:
-        return len(self._data)
+        with self._lock:
+            return len(self._data)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._data)
+        with self._lock:
+            return iter(tuple(self._data))
 
 
 class OpenbridgeAuth:
@@ -222,6 +229,7 @@ class OpenbridgeAuth:
             "https://authentication.api.openbridge.io",
         )
         self._cache: Optional[_CachedToken] = None
+        self._cache_lock = threading.RLock()
         # Per-token cache for client-provided refresh tokens. Typed as
         # the TokenCache Protocol so a subclass / bootstrap shim can
         # replace it with a Redis-backed adapter without changing the
@@ -236,9 +244,10 @@ class OpenbridgeAuth:
             raise AuthenticationError(
                 "OPENBRIDGE_REFRESH_TOKEN not available for JWT generation"
             )
-        if self._cache and self._cache.is_valid():
-            return self._cache.token
-        return self._refresh()
+        with self._cache_lock:
+            if self._cache and self._cache.is_valid():
+                return self._cache.token
+            return self._refresh()
 
     def exchange_token(self, refresh_token: str) -> str:
         """Exchange an arbitrary refresh token for a JWT.

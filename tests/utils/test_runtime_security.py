@@ -8,6 +8,7 @@ from src.utils import runtime_security
 from src.utils.runtime_security import (
     env_flag,
     is_loopback_host,
+    positive_int_env,
     require_client_auth_enabled,
     validate_runtime_security,
 )
@@ -178,6 +179,18 @@ def test_enabled_path_tokens_reject_invalid_lifetime_settings(monkeypatch, name,
 def test_env_flag_accepts_truthy_values(monkeypatch, value):
     monkeypatch.setenv("TEST_RUNTIME_FLAG", value)
     assert env_flag("TEST_RUNTIME_FLAG", default=False) is True
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-an-integer"])
+def test_auth_exchange_concurrency_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY", value)
+    with pytest.raises(RuntimeError, match="OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY"):
+        validate_runtime_security("127.0.0.1")
+
+
+def test_positive_int_env_accepts_positive_value(monkeypatch):
+    monkeypatch.setenv("OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY", "3")
+    assert positive_int_env("OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY", default=8) == 3
 
 
 @pytest.mark.parametrize(

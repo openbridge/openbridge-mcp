@@ -223,6 +223,9 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
   - `OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH` (optional, default `false`): Dangerous compatibility override for a deliberately isolated single-tenant container that must bind `0.0.0.0`
     - Required when `AUTH_ENABLED=false` or server-token fallback is combined with any non-loopback bind
     - Never enable on a shared or publicly reachable application port; startup emits a prominent warning
+  - `OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY` (optional, default `8`): Positive worker limit for the dedicated refresh-token exchange executor
+    - Separate from FastMCP's sync-tool executor so a slow auth upstream cannot starve tool calls
+    - Concurrent exchanges for the same client credential are de-duplicated per process
   - `OPENBRIDGE_API_TIMEOUT` (optional, default `30`): Read timeout (seconds) for Openbridge HTTP requests
     - Connect timeout is fixed at 10 seconds
   - `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (optional, default `256`): Per-process LRU cap on cached client refresh-token → JWT mappings
