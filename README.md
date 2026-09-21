@@ -213,6 +213,7 @@ Required for server and tools to function. Values typically point to your enviro
 - Query Validation (AI-powered)
   - `FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY` (optional): A real key enables `validate_query` and is also required for `execute_query`. These tools call the OpenAI Responses API directly to validate SQL queries for read-only operations, LIMIT clauses, and related safety checks. Without a key, neither query tool is available. Get your API key at [OpenAI Platform](https://platform.openai.com/docs/api-reference/introduction).
   - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `false`): Explicitly opts in to registering `execute_query`. Execution requires both this flag set to `true` and a real sampling API key; validation can remain available without execution.
+  - `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS` (optional, default `false`): Adds the credential-returning `get_amazon_api_access_token` tool and the five mutation tools (`update_history_status`, `create_job`, `create_subscription`, `update_subscription`, `cancel_subscription`). Enabling this profile makes these operations reachable through Code Mode's `execute` bridge, so use a trusted client and enforce upstream authorization.
   - `FASTMCP_SAMPLING_MODEL` (optional, default: `gpt-4o-mini`): OpenAI model to use for query validation.
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint for query validation.
   - `OPENBRIDGE_ENABLE_LLM_VALIDATION` (optional, default `false`): Explicitly opt in to sending SQL text to the configured OpenAI-compatible endpoint for validation. When disabled the server uses heuristics only.
@@ -258,6 +259,8 @@ MCP_PATH_TOKEN_ENABLED=false
 OPENBRIDGE_ENABLE_LLM_VALIDATION=false
 # Explicit opt-in required for query execution tool registration
 OPENBRIDGE_ENABLE_QUERY_EXECUTION=false
+# Explicit opt-in for credential-returning and mutation tools
+OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=false
 
 # A real key enables validate_query and is also required for execute_query
 # FASTMCP_SAMPLING_API_KEY=
@@ -368,6 +371,8 @@ The provider uses `supporting_files="resources"` so reference docs and eval JSON
 ### Tools exposed
 By default (`CODE_MODE=true`), Code Mode is active and clients typically see meta-tools like `search`, `get_schema`/`get_schemas`, and `execute` (plus `tags` when enabled).  
 Set `CODE_MODE=false` to opt out and expose the direct tool catalog documented below.
+
+The default catalog is read-oriented. Credential-returning and mutating tools are absent unless `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`. Call `get_capabilities` before planning a privileged workflow. Existing deployments that rely on these six tools must set the flag before deploying this release and confirm their presence in a smoke test.
 
 - Capabilities
   - `get_capabilities`

@@ -89,6 +89,12 @@ registered. Two facts that have caused failures in production:
 - **Always call `get_capabilities()` once per session.** It returns which
   tools are enabled, the env vars they require, and any `disabled_reason`.
   Use it instead of guessing from a tool name list.
+- **Privileged tools are default-off.** `get_amazon_api_access_token`,
+  `update_history_status`, `create_job`, `create_subscription`,
+  `update_subscription`, and `cancel_subscription` appear only when the
+  operator sets `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`. Check their
+  individual `enabled` values before planning those workflows. If absent,
+  explain that the operator must opt in; never substitute another mutation.
 - **The query tools (`validate_query`, `execute_query`) are conditionally
   registered.** Server registration is gated on
   `OPENBRIDGE_ENABLE_LLM_VALIDATION=true` AND a sampling key

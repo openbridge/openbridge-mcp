@@ -25,9 +25,13 @@
     {
       "id": 1,
       "prompt": "Backfill subscription 987 from 2024-01-01 to 2024-01-07. The subscription's product is 50 (Amazon Ads — Sponsored Brands). Walk me through it on the openbridge MCP.",
-      "expected_output": "Sequence: get_subscription_by_id (or skip with rationale) → get_product_stage_ids(product_id=50) → create_job with subscription_id, ISO date_start/date_end, and an explicit stage_ids list. Notes that stage_ids is required by the MCP schema.",
+      "expected_output": "Calls get_capabilities first. If create_job is enabled: get_subscription_by_id (or skip with rationale) → get_product_stage_ids(product_id=50) → create_job with subscription_id, ISO date_start/date_end, and an explicit stage_ids list. If disabled: explains that OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true is required and stops without attempting the unavailable mutation.",
       "files": [],
       "assertions": [
+        {
+          "name": "checks-privileged-capability",
+          "condition": "Output checks get_capabilities before create_job and accepts a disabled response by explaining the OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS opt-in"
+        },
         {
           "name": "uses-get-product-stage-ids",
           "condition": "Output instructs calling get_product_stage_ids (or equivalent stage discovery) before creating the job"

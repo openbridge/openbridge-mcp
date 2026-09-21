@@ -25,7 +25,13 @@ the live server — the schemas drift faster than this doc.
 No arguments. Returns currently enabled tools, required env vars, and the
 set of opt-in features (e.g. AI query validation, OAuth proxy mode).
 **Always call this once per session** before assuming a tool is available
-— some tools (the SQL query family) are conditionally registered.
+— SQL and privileged tools are conditionally registered.
+
+The default profile is read-oriented. The following privileged tools require
+`OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`: `get_amazon_api_access_token`,
+`update_history_status`, `create_job`, `create_subscription`,
+`update_subscription`, and `cancel_subscription`. Enabling them also exposes
+them through Code Mode `execute`. Confirm destructive operations with the user.
 
 ## Jobs
 

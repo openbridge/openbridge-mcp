@@ -205,6 +205,7 @@ def create_mcp_server() -> FastMCP:
     # execution OPTIONAL — clients choose per call. Tools without
     # task=... fall through to "forbidden" by FastMCP's default.
     DEFAULT_TASK_CONFIG = TaskConfig(mode="optional")
+    FORBIDDEN_TASK_CONFIG = TaskConfig(mode="forbidden")
 
     def register_tool(name: str, func, *, task: TaskConfig | None = DEFAULT_TASK_CONFIG):
         impl = func if _is_async_callable(func) else _async_wrap(func)
@@ -247,7 +248,13 @@ def create_mcp_server() -> FastMCP:
             logger.info("Skipping execute_query: OPENBRIDGE_ENABLE_QUERY_EXECUTION is false")
     else:
         logger.info("Skipping SQL query tools: no API key configured (set FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY)")
-    register_tool("get_amazon_api_access_token", service_tools.get_amazon_api_access_token)
+    privileged_enabled = capabilities_tools.privileged_tools_enabled()
+    if privileged_enabled:
+        register_tool(
+            "get_amazon_api_access_token",
+            service_tools.get_amazon_api_access_token,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
     register_tool("get_amazon_advertising_profiles", service_tools.get_amazon_advertising_profiles)
     register_tool("get_table_schema", service_tools.get_table_schema)
     register_tool("get_suggested_table_names", service_tools.get_suggested_table_names)
@@ -257,14 +264,32 @@ def create_mcp_server() -> FastMCP:
     register_tool("get_jobs", jobs_tools.get_jobs)
     register_tool("get_job_by_id", jobs_tools.get_job_by_id)
     register_tool("get_history_by_id", jobs_tools.get_history_by_id)
-    register_tool("update_history_status", jobs_tools.update_history_status)
-    register_tool("create_job", jobs_tools.create_job)
+    if privileged_enabled:
+        register_tool(
+            "update_history_status",
+            jobs_tools.update_history_status,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
+        register_tool("create_job", jobs_tools.create_job, task=FORBIDDEN_TASK_CONFIG)
     # Subscriptions tools
     register_tool("get_subscriptions", subscriptions_tools.get_subscriptions)
     register_tool("get_subscription_by_id", subscriptions_tools.get_subscription_by_id)
-    register_tool("create_subscription", subscriptions_tools.create_subscription)
-    register_tool("update_subscription", subscriptions_tools.update_subscription)
-    register_tool("cancel_subscription", subscriptions_tools.cancel_subscription)
+    if privileged_enabled:
+        register_tool(
+            "create_subscription",
+            subscriptions_tools.create_subscription,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
+        register_tool(
+            "update_subscription",
+            subscriptions_tools.update_subscription,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
+        register_tool(
+            "cancel_subscription",
+            subscriptions_tools.cancel_subscription,
+            task=FORBIDDEN_TASK_CONFIG,
+        )
     register_tool("get_storage_subscriptions", subscriptions_tools.get_storage_subscriptions)
     # Products tools
     register_tool("get_product_stage_ids", products_tools.get_product_stage_ids)

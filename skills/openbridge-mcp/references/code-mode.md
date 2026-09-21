@@ -9,6 +9,12 @@ called via `execute(code)`.
 This file covers the four meta-tools, the sandbox limits, and the calling
 patterns that actually work. Read this before writing any `execute()` block.
 
+Code Mode does not bypass catalog gates. Call `get_capabilities()` before
+referencing privileged tools; access-token retrieval and mutation tools are
+absent unless `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`. Enabling the flag
+makes them callable through the single `execute` surface, so retain explicit
+confirmation for destructive operations.
+
 ## Why Code Mode
 
 The direct catalog has 25+ tools. Code Mode trades that surface for four

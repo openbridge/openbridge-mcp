@@ -9,6 +9,11 @@ string-matching summaries.
 The full contract lives at `openbridge-mcp/CONTRACT.md` in the server repo.
 This page is the working subset for skill use.
 
+An unavailable privileged tool is a capability decision, not a retryable tool
+error. Check `get_capabilities()` before calling access-token or mutation tools.
+If disabled, tell the operator that `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`
+is required; do not retry or route around the gate.
+
 ## Shape
 
 ```json

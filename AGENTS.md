@@ -202,7 +202,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Tests pin this to `memory://` via fixtures so the suite stays offline.
   - `FASTMCP_DOCKET_CONCURRENCY` (optional, default `10`): max concurrent background tasks per worker.
   - `FASTMCP_TASKS_ENCRYPTION_KEY` (required for Docker Compose): encrypts task context snapshots persisted in Redis. Snapshots include the submitting caller's access token and HTTP headers. Generate a stable value with `openssl rand -hex 32`; every server and worker sharing the queue must use the same value.
-  - Every Openbridge-API tool registers with `task=TaskConfig(mode="optional")`; clients choose sync vs background per call. `get_capabilities` is exempt (no I/O).
+  - Read-oriented Openbridge-API tools register with `task=TaskConfig(mode="optional")`; clients choose sync vs background per call. Privileged tools use `TaskConfig(mode="forbidden")`, and `get_capabilities` is exempt (no I/O).
 
 - **Code mode (primary client entry point)**
   - `CODE_MODE` (default `true`, **recommended on**): Code Mode is the primary surface — clients see only `tags`/`search`/`get_schema`/`execute`. `CODE_MODE=false` exposes the full direct catalog and emits a startup WARNING.
@@ -258,6 +258,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
     - Without a key, neither query tool is registered
   - `OPENBRIDGE_ENABLE_QUERY_EXECUTION` (optional, default `false`): Explicitly opts in to `execute_query` registration
     - Execution requires both this flag set to `true` and a real sampling API key; `validate_query` can remain available without execution
+  - `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS` (optional, default `false`): Registers the credential-returning Amazon access-token tool and mutation tools. Enabling it exposes those operations through Code Mode `execute`; restrict it to trusted clients with upstream authorization. Set it before rollout only for deployments that need the legacy full catalog, then verify with `get_capabilities`.
   - SQL validation calls the OpenAI Responses API directly because FastMCP 4 removed server-initiated context sampling
   - `FASTMCP_SAMPLING_MODEL` (optional, default `gpt-4o-mini`): OpenAI model for query validation
   - `FASTMCP_SAMPLING_BASE_URL` (optional): Custom OpenAI-compatible API endpoint

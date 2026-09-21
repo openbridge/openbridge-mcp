@@ -2,7 +2,8 @@ import os
 from typing import Any, Dict, List, Set
 
 from src.server.code_mode import is_code_mode_enabled
-from .tool_manifest import TOOL_MANIFEST
+from .tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
+from src.utils.runtime_security import env_flag
 
 _SUPPORTED_ERROR_KINDS = [
     "mcp_input_validation",
@@ -29,6 +30,11 @@ def query_execution_enabled() -> bool:
     }
 
 
+def privileged_tools_enabled() -> bool:
+    """Return True only when privileged tools are explicitly enabled."""
+    return env_flag("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", default=False)
+
+
 def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
     """Build capability metadata for the current MCP runtime."""
     has_sampling_key = _env_present("FASTMCP_SAMPLING_API_KEY") or _env_present("OPENAI_API_KEY")
@@ -36,9 +42,20 @@ def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
     query_enabled = query_execution_enabled()
 
     tools: List[Dict[str, Any]] = []
+    disabled: List[str] = []
     not_installed: List[str] = []
     for tool_name, meta in TOOL_MANIFEST.items():
         if tool_name not in registered_tool_names:
+            if tool_name in PRIVILEGED_TOOL_NAMES and not privileged_tools_enabled():
+                tools.append({
+                    "name": tool_name,
+                    "category": meta["category"],
+                    "enabled": False,
+                    "privileged": True,
+                    "requires_env": ["OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true"],
+                })
+                disabled.append(tool_name)
+                continue
             not_installed.append(tool_name)
             continue
 
@@ -47,6 +64,8 @@ def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
             "category": meta["category"],
             "enabled": True,
         }
+        if tool_name in PRIVILEGED_TOOL_NAMES:
+            tool["privileged"] = True
 
         if tool_name == "validate_query":
             tool["requires_env"] = ["FASTMCP_SAMPLING_API_KEY or OPENAI_API_KEY"]
@@ -70,7 +89,7 @@ def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
         "summary": {
             "total_tools_declared": len(TOOL_MANIFEST),
             "enabled_tools": len(tools),
-            "disabled_tools": 0,
+            "disabled_tools": len(disabled),
             "not_installed_tools": len(not_installed),
         },
         "runtime": {
@@ -78,15 +97,18 @@ def build_capabilities(registered_tool_names: Set[str]) -> Dict[str, Any]:
             "llm_validation_enabled": llm_opt_in,
             "code_mode_enabled": is_code_mode_enabled(),
             "query_execution_enabled": query_enabled,
+            "privileged_tools_enabled": privileged_tools_enabled(),
         },
         "openbridge_envelope": {
             "contract_version": 1,
             "error_kinds": _SUPPORTED_ERROR_KINDS,
         },
         "not_installed": sorted(not_installed),
+        "disabled": sorted(disabled),
         "security_notes": [
             "OPENBRIDGE_ENABLE_LLM_VALIDATION=false keeps SQL validation heuristic-only and prevents SQL egress to LLM providers.",
             "When OPENBRIDGE_ENABLE_LLM_VALIDATION=true, SQL text may be sent to the configured OpenAI-compatible endpoint for validation.",
+            "Privileged tools are absent unless OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true; enabling them permits credential-returning and mutating operations.",
         ],
         "tools": tools,
     }

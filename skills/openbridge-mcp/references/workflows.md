@@ -5,6 +5,12 @@ the question to ask the user, lists the tool sequence, and shows the calling
 pattern. Adapt to Code Mode (`execute(...)`) or direct catalog calls based on
 the deployment.
 
+Before job creation, subscription mutation, history-status updates, or access
+token retrieval, inspect `get_capabilities()`. Those privileged tools are
+absent by default and require `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true` on the
+server. Stop with an operator-facing enablement message when disabled. The flag
+does not replace user confirmation for destructive calls.
+
 ## Workflow 1 — Discover a table and (optionally) run a query
 
 **Trigger phrases:** "I want to query…", "what tables exist for…", "run SQL

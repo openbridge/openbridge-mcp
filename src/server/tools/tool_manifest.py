@@ -1,7 +1,16 @@
-from typing import Dict
+from typing import Any, Dict
 
 
-TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
+PRIVILEGED_TOOL_NAMES = frozenset({
+    "get_amazon_api_access_token",
+    "update_history_status",
+    "create_job",
+    "create_subscription",
+    "update_subscription",
+    "cancel_subscription",
+})
+
+TOOL_MANIFEST: Dict[str, Dict[str, Any]] = {
     "get_capabilities": {
         "category": "meta",
         "description": "Return current tool availability, required environment variables, and LLM opt-in behavior.",
@@ -33,6 +42,7 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
     "get_amazon_api_access_token": {
         "category": "service",
         "description": "Get the Amazon API access token for a given remote identity ID. Returns the access token if available.",
+        "privileged": True,
     },
     "get_amazon_advertising_profiles": {
         "category": "service",
@@ -65,10 +75,12 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
     "update_history_status": {
         "category": "jobs",
         "description": "Update a history transaction status by history ID.",
+        "privileged": True,
     },
     "create_job": {
         "category": "jobs",
         "description": "Create a job for a given subscription.",
+        "privileged": True,
     },
     "get_subscriptions": {
         "category": "subscriptions",
@@ -81,14 +93,17 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
     "create_subscription": {
         "category": "subscriptions",
         "description": "Create a subscription with JSON:API attributes payload.",
+        "privileged": True,
     },
     "update_subscription": {
         "category": "subscriptions",
         "description": "Update a subscription with JSON:API attributes payload.",
+        "privileged": True,
     },
     "cancel_subscription": {
         "category": "subscriptions",
         "description": "Cancel a subscription by setting status to cancelled.",
+        "privileged": True,
     },
     "get_storage_subscriptions": {
         "category": "subscriptions",
@@ -115,4 +130,3 @@ TOOL_MANIFEST: Dict[str, Dict[str, str]] = {
         "description": "Get metadata for all available Openbridge products. Use for product discovery when the specific product name is unknown.",
     },
 }
-

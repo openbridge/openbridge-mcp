@@ -1,7 +1,7 @@
 import pytest
 
 from src.server.tools import capabilities
-from src.server.tools.tool_manifest import TOOL_MANIFEST
+from src.server.tools.tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
 
 
 def test_build_capabilities_marks_query_tools_disabled_without_sampling_key(monkeypatch):
@@ -152,3 +152,26 @@ def test_build_capabilities_lists_every_manifest_tool():
     result = capabilities.build_capabilities(registered)
     emitted = {t["name"] for t in result["tools"]}
     assert emitted == registered
+
+
+def test_build_capabilities_marks_privileged_tools_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", raising=False)
+    registered = set(TOOL_MANIFEST) - PRIVILEGED_TOOL_NAMES
+
+    result = capabilities.build_capabilities(registered)
+    by_name = {tool["name"]: tool for tool in result["tools"]}
+
+    assert result["runtime"]["privileged_tools_enabled"] is False
+    assert set(result["disabled"]) == PRIVILEGED_TOOL_NAMES
+    assert result["summary"]["disabled_tools"] == len(PRIVILEGED_TOOL_NAMES)
+    assert all(by_name[name]["enabled"] is False for name in PRIVILEGED_TOOL_NAMES)
+
+
+def test_build_capabilities_marks_privileged_tools_enabled_when_opted_in(monkeypatch):
+    monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
+    result = capabilities.build_capabilities(set(TOOL_MANIFEST))
+    by_name = {tool["name"]: tool for tool in result["tools"]}
+
+    assert result["runtime"]["privileged_tools_enabled"] is True
+    assert result["disabled"] == []
+    assert all(by_name[name]["enabled"] is True for name in PRIVILEGED_TOOL_NAMES)
