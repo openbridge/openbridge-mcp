@@ -76,7 +76,6 @@ def disable_code_mode_by_default(monkeypatch):
 
 def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     """Test that query validation tools are registered when API key is present."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     # Set an API key to enable query validation tools
@@ -85,21 +84,11 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-
-    def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        assert config is fake_config
-        assert jwt_middleware is False
-        assert auth_manager == "auth-manager"
-        return [fake_middleware]
-
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
 
     assert isinstance(server, FakeFastMCP)
-    assert fake_middleware not in server.middleware
     assert len(server.extensions) == 1
 
     expected_tools = {
@@ -132,7 +121,6 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
 
 def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
     """Test that query validation tools are NOT registered when API key is missing."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     # Ensure no API keys are set
@@ -140,12 +128,6 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
     monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-
-    def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        return [fake_middleware]
-
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -182,7 +164,6 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
 
 def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     """Test that FASTMCP_SAMPLING_API_KEY also enables query validation tools."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     # Set FASTMCP_SAMPLING_API_KEY instead of OPENAI_API_KEY
@@ -191,8 +172,6 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -208,12 +187,6 @@ def test_query_execution_defaults_disabled(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(
-        mcp_server,
-        "create_auth_middleware",
-        lambda *args, **kwargs: [object()],
-    )
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -223,15 +196,12 @@ def test_query_execution_defaults_disabled(monkeypatch):
 
 
 def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
     monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "false")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -242,12 +212,9 @@ def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
 
 def test_health_endpoint(monkeypatch):
     """Test that health check endpoint is registered."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -272,14 +239,11 @@ def test_get_service_version_returns_unknown_when_package_missing(monkeypatch):
 
 
 def test_code_mode_enabled_by_default_applies_transform(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
     fake_transform = object()
 
     monkeypatch.delenv("CODE_MODE", raising=False)
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "create_code_mode_transform", lambda: fake_transform)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
@@ -289,13 +253,10 @@ def test_code_mode_enabled_by_default_applies_transform(monkeypatch):
 
 
 def test_code_mode_opt_out_disables_transform(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setenv("CODE_MODE", "false")
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     def should_not_be_called():
         raise AssertionError("create_code_mode_transform should not be called when CODE_MODE=false")
 
@@ -308,13 +269,10 @@ def test_code_mode_opt_out_disables_transform(monkeypatch):
 
 
 def test_code_mode_missing_dependency_falls_back_to_direct_tools(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.delenv("CODE_MODE", raising=False)
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     def raise_import_error():
         raise ImportError("missing sandbox package")
 
@@ -340,12 +298,9 @@ def test_code_mode_missing_dependency_falls_back_to_direct_tools(monkeypatch):
 
 def _build_server_with_defaults(monkeypatch) -> "FakeFastMCP":
     """Wire up the common fakes so a single helper can build a test server."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
     return mcp_server.create_mcp_server()
 

@@ -1,10 +1,8 @@
 """OAuthProxy authentication support for Openbridge MCP.
 
 Implements the ``oauth_proxy`` auth mode where FastMCP handles the full OAuth
-2.0 authorization code flow.  FastMCP proxies to Openbridge's OAuth endpoints
-and verifies tokens via introspection.  A lightweight bridge middleware then
-writes the already-verified access token into the per-request ContextVar so
-all existing tools work without changes.
+2.0 authorization code flow, proxies to Openbridge's OAuth endpoints, verifies
+tokens via introspection, and supplies the native request access-token context.
 
 Usage (set in environment):
     OPENBRIDGE_AUTH_MODE=oauth_proxy
@@ -21,16 +19,6 @@ import uuid
 from typing import Iterable, Optional
 
 from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProxy, TokenVerifier
-from fastmcp.server.dependencies import get_access_token
-from fastmcp.server.middleware import Middleware, MiddlewareContext
-
-from .authentication import (
-    JWT_CONTEXT_ATTR,
-    JWT_PUBLIC_ATTR,
-    _log_jwt_identity,
-    _set_context_state,
-)
-from .session_state import set_request_jwt
 from .openbridge_verifier import (
     create_openbridge_credential_verifier,
     create_openbridge_introspection_verifier,
@@ -154,46 +142,7 @@ def create_oauth_auth(*, base_url: str) -> MultiAuth:
     )
 
 
-class OAuthBridgeMiddleware(Middleware):
-    """Bridge between FastMCP's OAuthProxy and the ContextVar-based token store.
-
-    When FastMCP is configured with ``OAuthProxy``, it verifies the Bearer
-    token via introspection *before* middleware runs.  The verified access
-    token is then available via ``get_access_token()``.  This middleware reads
-    that token and writes it into ``session_state._jwt_var`` via
-    ``set_request_jwt()``, so all existing tools that call
-    ``get_auth_headers()`` continue to work without modification.
-
-    In ``oauth_proxy`` mode, ``access_token.token`` is the raw Openbridge JWT
-    returned by the upstream ``/auth/oauth/token`` endpoint — directly usable
-    for downstream Openbridge API calls.
-    """
-
-    async def on_request(self, context: MiddlewareContext, call_next):
-        if not context.fastmcp_context:
-            return await call_next(context)
-
-        access_token = get_access_token()
-        if access_token is not None:
-            jwt_token = access_token.token
-            _log_jwt_identity(jwt_token)
-            set_request_jwt(jwt_token)
-            await _set_context_state(context.fastmcp_context, JWT_CONTEXT_ATTR, jwt_token)
-            await _set_context_state(context.fastmcp_context, JWT_PUBLIC_ATTR, jwt_token)
-            logger.debug(
-                "OAuthBridgeMiddleware: primed JWT from OAuth access token "
-                "(scopes=%s)",
-                getattr(access_token, "scopes", None),
-            )
-        else:
-            set_request_jwt(None)
-            logger.debug("OAuthBridgeMiddleware: no OAuth access token present")
-
-        return await call_next(context)
-
-
 __all__: Iterable[str] = [
-    "OAuthBridgeMiddleware",
     "OpenbridgeOAuthProxy",
     "create_oauth_auth",
     "create_oauth_proxy",

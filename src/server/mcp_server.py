@@ -25,10 +25,8 @@ from src.utils.logging import get_logger  # noqa: E402
 from src.utils.runtime_security import (  # noqa: E402
     env_flag,
     is_loopback_host,
-    require_client_auth_enabled,
 )
-from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402,F401
-from src.auth.manager import get_auth_manager  # noqa: E402,F401
+from src.auth.authentication import create_openbridge_config  # noqa: E402
 from src.auth.oauth_proxy import create_oauth_auth  # noqa: E402
 from src.auth.openbridge_verifier import create_openbridge_credential_verifier  # noqa: E402
 from src.server.code_mode import create_code_mode_transform, is_code_mode_enabled  # noqa: E402
@@ -89,10 +87,15 @@ def _warn_if_server_token_fallback_open() -> None:
     Remote fallback requires a separately named dangerous override and is
     surfaced with a high-signal warning.
     """
-    server_token_set = bool(os.getenv("OPENBRIDGE_REFRESH_TOKEN"))
-    if not server_token_set:
+    if os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH") is not None:
+        logger.warning(
+            "OPENBRIDGE_REQUIRE_CLIENT_AUTH is deprecated and ignored; "
+            "AUTH_ENABLED=true always requires a valid client credential."
+        )
+
+    if env_flag("AUTH_ENABLED", default=True):
         return
-    if require_client_auth_enabled():
+    if not os.getenv("OPENBRIDGE_REFRESH_TOKEN"):
         return
     host = os.getenv("MCP_HOST", "0.0.0.0")
     if not is_loopback_host(host) and env_flag(
@@ -107,10 +110,9 @@ def _warn_if_server_token_fallback_open() -> None:
         )
         return
     logger.warning(
-        "OPENBRIDGE_REFRESH_TOKEN fallback is enabled because "
-        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=false. Keep MCP_HOST on loopback for "
-        "local single-tenant use; remote startup otherwise fails closed, and "
-        "multi-tenant deployments must require client authentication."
+        "OPENBRIDGE_REFRESH_TOKEN fallback is enabled while authentication is "
+        "disabled. Keep MCP_HOST on loopback for local single-tenant use; "
+        "remote startup otherwise fails closed."
     )
 
 def _is_async_callable(func: Callable[..., Any]) -> bool:

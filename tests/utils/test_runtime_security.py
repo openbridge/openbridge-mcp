@@ -9,28 +9,25 @@ from src.utils.runtime_security import (
     env_flag,
     is_loopback_host,
     positive_int_env,
-    require_client_auth_enabled,
     validate_secret,
     validate_runtime_security,
 )
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.0.2.10"])
-def test_remote_server_token_fallback_fails_startup(monkeypatch, host):
+def test_auth_enabled_remote_bind_has_no_server_token_fallback(monkeypatch, host):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "account:secret")
     monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
     monkeypatch.delenv("OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH", raising=False)
 
-    with pytest.raises(RuntimeError, match="client authentication"):
-        validate_runtime_security(host)
+    validate_runtime_security(host)
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.2", "localhost", "::1", "[::1]"])
-def test_loopback_explicit_fallback_is_allowed(monkeypatch, host):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
+def test_auth_disabled_loopback_server_fallback_is_allowed(monkeypatch, host):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setenv("OPENBRIDGE_REFRESH_TOKEN", "account:secret")
-    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
     monkeypatch.delenv("OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH", raising=False)
 
     validate_runtime_security(host)
@@ -65,14 +62,23 @@ def test_remote_explicit_unsafe_override_is_allowed_and_warned(monkeypatch, capl
     assert "remote" in message.lower()
 
 
-def test_client_auth_defaults_true(monkeypatch):
-    monkeypatch.delenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", raising=False)
-    assert require_client_auth_enabled() is True
+def test_deprecated_client_auth_flag_warns_once(monkeypatch, caplog):
+    from src.server import mcp_server
 
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "false")
+    monkeypatch.delenv("OPENBRIDGE_REFRESH_TOKEN", raising=False)
 
-def test_invalid_client_auth_flag_uses_safe_default(monkeypatch):
-    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "typo")
-    assert require_client_auth_enabled() is True
+    with caplog.at_level(logging.WARNING, logger="mcp_query_execution.mcp_server"):
+        mcp_server._warn_if_server_token_fallback_open()
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "OPENBRIDGE_REQUIRE_CLIENT_AUTH" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    assert "deprecated and ignored" in messages[0]
 
 
 def test_main_validates_host_before_server_creation(monkeypatch):
@@ -141,10 +147,21 @@ def test_main_wraps_path_tokens_when_explicitly_enabled(monkeypatch):
 
 
 def test_path_tokens_rejected_in_oauth_proxy_mode(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
     monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "oauth_proxy")
     monkeypatch.setenv("MCP_PATH_TOKEN_SECRET", "s" * 32)
     with pytest.raises(RuntimeError, match="refresh_token"):
+        validate_runtime_security("127.0.0.1")
+
+
+def test_path_tokens_rejected_when_authentication_is_disabled(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
+    monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "refresh_token")
+    monkeypatch.setenv("MCP_PATH_TOKEN_SECRET", "s" * 32)
+
+    with pytest.raises(RuntimeError, match="AUTH_ENABLED=true"):
         validate_runtime_security("127.0.0.1")
 
 
@@ -153,6 +170,7 @@ def test_path_tokens_rejected_in_oauth_proxy_mode(monkeypatch):
     [None, "short", "your-strong-secret-here", "your-32-byte-hex-secret-here"],
 )
 def test_enabled_path_tokens_require_strong_non_placeholder_secret(monkeypatch, secret):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
     monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "refresh_token")
     if secret is None:
@@ -167,6 +185,7 @@ def test_enabled_path_tokens_require_strong_non_placeholder_secret(monkeypatch, 
 @pytest.mark.parametrize("name", ["MCP_PATH_TOKEN_TTL_DAYS", "MCP_PATH_TOKEN_MAX_AGE_DAYS"])
 @pytest.mark.parametrize("value", ["0", "8", "not-an-integer"])
 def test_enabled_path_tokens_reject_invalid_lifetime_settings(monkeypatch, name, value):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("MCP_PATH_TOKEN_ENABLED", "true")
     monkeypatch.setenv("OPENBRIDGE_AUTH_MODE", "refresh_token")
     monkeypatch.setenv("MCP_PATH_TOKEN_SECRET", "s" * 32)
