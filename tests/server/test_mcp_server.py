@@ -1,16 +1,22 @@
 import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken
+from fastmcp.server.dependencies import get_access_token
 
+from src.auth.openbridge_verifier import OpenbridgeCredentialVerifier
 from src.server import mcp_server
 from src.server.tools.tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
 
 
 class FakeAuthConfig:
-    def __init__(self):
-        self.enabled = False
-        self.auth_mode = "refresh_token"
+    def __init__(self, *, enabled=False, auth_mode="refresh_token"):
+        self.enabled = enabled
+        self.auth_mode = auth_mode
 
 
 class FakeFastMCP:
@@ -93,7 +99,7 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     server = mcp_server.create_mcp_server()
 
     assert isinstance(server, FakeFastMCP)
-    assert fake_middleware in server.middleware
+    assert fake_middleware not in server.middleware
     assert len(server.extensions) == 1
 
     expected_tools = {
@@ -443,3 +449,163 @@ def test_no_orphan_manifest_entries(monkeypatch):
     # And the inverse: nothing registered should be missing from the manifest.
     extras = reachable - set(TOOL_MANIFEST.keys())
     assert not extras, f"Tools registered without a manifest entry: {sorted(extras)}"
+
+
+def test_oauth_mode_uses_multi_auth_provider(monkeypatch):
+    oauth_auth = object()
+    config = FakeAuthConfig(enabled=True, auth_mode="oauth_proxy")
+    monkeypatch.setenv("MCP_BASE_URL", "https://mcp.example.test")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: config)
+    monkeypatch.setattr(mcp_server, "create_oauth_auth", lambda **_kwargs: oauth_auth)
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert server.auth is oauth_auth
+    assert len(server.middleware) == 1
+
+
+def test_refresh_token_mode_uses_native_credential_verifier(monkeypatch):
+    credential_verifier = object()
+    config = FakeAuthConfig(enabled=True, auth_mode="refresh_token")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: config)
+    monkeypatch.setattr(
+        mcp_server,
+        "create_openbridge_credential_verifier",
+        lambda: credential_verifier,
+    )
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert server.auth is credential_verifier
+    assert len(server.middleware) == 1
+
+
+def test_auth_disabled_installs_no_auth_provider(monkeypatch):
+    config = FakeAuthConfig(enabled=False, auth_mode="oauth_proxy")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: config)
+    monkeypatch.setattr(
+        mcp_server,
+        "create_oauth_auth",
+        lambda **_kwargs: pytest.fail("OAuth provider must not be constructed"),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "create_openbridge_credential_verifier",
+        lambda: pytest.fail("Credential verifier must not be constructed"),
+    )
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert server.auth is None
+    assert len(server.middleware) == 1
+
+
+async def _post_tool_call(app, authorization):
+    headers = {}
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        return await client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "spy", "arguments": {}},
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        None,
+        "Basic malformed",
+        "Bearer bogus-token",
+        "Bearer header.payload.bad",
+        "Bearer account123:bad-secret",
+    ],
+)
+async def test_native_http_boundary_rejects_invalid_credentials_before_tool(
+    authorization,
+):
+    auth = MagicMock()
+    auth.exchange_token.side_effect = RuntimeError("exchange rejected")
+    introspection = AsyncMock(return_value=None)
+    introspection.verify_token.return_value = None
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("auth-boundary-test", auth=verifier)
+    calls = 0
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        nonlocal calls
+        calls += 1
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    async with app.router.lifespan_context(app):
+        response = await _post_tool_call(app, authorization)
+
+    assert response.status_code == 401
+    assert calls == 0
+    assert '"isError":false' not in response.text
+    assert '"result":[]' not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("credential", "expected_jwt"),
+    [
+        ("header.payload.signature", "header.payload.signature"),
+        ("account123:api-secret", "exchanged.jwt.token"),
+    ],
+)
+async def test_native_http_boundary_exposes_verified_jwt_to_tool(
+    credential,
+    expected_jwt,
+):
+    auth = MagicMock()
+    auth.exchange_token.return_value = "exchanged.jwt.token"
+    introspection = AsyncMock()
+
+    async def verify(candidate):
+        return AccessToken(
+            token=candidate,
+            client_id="unknown",
+            scopes=[],
+            claims={"active": True, "account_id": 101, "user_id": 202},
+        )
+
+    introspection.verify_token.side_effect = verify
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("auth-boundary-test", auth=verifier)
+    observed_tokens = []
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        access_token = get_access_token()
+        observed_tokens.append(access_token.token if access_token else None)
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    async with app.router.lifespan_context(app):
+        response = await _post_tool_call(app, f"Bearer {credential}")
+
+    assert response.status_code == 200
+    assert observed_tokens == [expected_jwt]

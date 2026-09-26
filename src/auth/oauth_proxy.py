@@ -14,13 +14,13 @@ Usage (set in environment):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import uuid
 from typing import Iterable, Optional
 
-from fastmcp.server.auth import OAuthProxy
-from fastmcp.server.auth.providers.introspection import IntrospectionTokenVerifier
+from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProxy, TokenVerifier
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
@@ -31,6 +31,11 @@ from .authentication import (
     _set_context_state,
 )
 from .session_state import set_request_jwt
+from .openbridge_verifier import (
+    create_openbridge_credential_verifier,
+    create_openbridge_introspection_verifier,
+    normalize_verified_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,35 @@ _DEFAULT_AUTH_BASE_URL = "https://authentication.api.openbridge.io"
 _DEFAULT_VALID_SCOPES = ["openid", "profile"]
 
 
-def create_oauth_proxy(*, base_url: str) -> OAuthProxy:
+class OpenbridgeOAuthProxy(OAuthProxy):
+    """OAuth proxy that assigns every verified token an isolated task identity."""
+
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        """Load the upstream token and normalize its FastMCP task identity."""
+        verified = await super().load_access_token(token)
+        if verified is None:
+            return None
+
+        normalized = normalize_verified_identity(verified)
+        if normalized is not None:
+            return normalized
+
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        subject = f"oauth-session:{digest}"
+        return verified.model_copy(
+            update={
+                "client_id": "openbridge-oauth",
+                "subject": subject,
+                "claims": {**verified.claims, "sub": subject},
+            }
+        )
+
+
+def create_oauth_proxy(
+    *,
+    base_url: str,
+    token_verifier: TokenVerifier | None = None,
+) -> OpenbridgeOAuthProxy:
     """Return an OAuthProxy configured for Openbridge's OAuth endpoints.
 
     Reads all configuration from environment variables (documented in
@@ -65,21 +98,15 @@ def create_oauth_proxy(*, base_url: str) -> OAuthProxy:
             "Set MCP_JWT_SIGNING_KEY to a stable secret for production deployments."
         )
 
-    # Expected for introspection.
-    # Expose env vars so operators can override if the endpoint changes.
     client_id = os.getenv("OPENBRIDGE_OAUTH_CLIENT_ID", "openbridge-mcp")
     client_secret = os.getenv("OPENBRIDGE_OAUTH_CLIENT_SECRET", "not-used")
 
-    logger.info("Configuring OAuthProxy with introspection endpoint: %s/auth/oauth/introspect", auth_base_url)
-    token_verifier = IntrospectionTokenVerifier(
-        introspection_url=f"{auth_base_url}/auth/oauth/introspect",
-        client_id=client_id,
-        client_secret=client_secret,
-        client_auth_method="client_secret_post",
+    verifier = token_verifier or create_openbridge_introspection_verifier(
+        base_url=base_url
     )
 
     logger.info("Creating OAuthProxy with upstream authorization endpoint: %s/auth/oauth/initialize and base URL: %s", auth_base_url, base_url)
-    return OAuthProxy(
+    return OpenbridgeOAuthProxy(
         upstream_authorization_endpoint=f"{auth_base_url}/auth/oauth/initialize",
         upstream_token_endpoint=f"{auth_base_url}/auth/oauth/token",
         # Openbridge reads the upstream client_id from embedded secrets;
@@ -87,7 +114,7 @@ def create_oauth_proxy(*, base_url: str) -> OAuthProxy:
         upstream_client_id=client_id,
         upstream_client_secret=client_secret,
         jwt_signing_key=signing_key,
-        token_verifier=token_verifier,
+        token_verifier=verifier,
         base_url=base_url,
         valid_scopes=_DEFAULT_VALID_SCOPES,
         # Openbridge's /auth/oauth/initialize only forwards redirect_uri and
@@ -106,6 +133,24 @@ def create_oauth_proxy(*, base_url: str) -> OAuthProxy:
         # latter logs a "only use for local development" warning at
         # boot, which would mislead operators.
         require_authorization_consent="external",
+    )
+
+
+def create_oauth_auth(*, base_url: str) -> MultiAuth:
+    """Compose browser OAuth and direct Openbridge credentials."""
+    introspection = create_openbridge_introspection_verifier(base_url=base_url)
+    return MultiAuth(
+        server=create_oauth_proxy(
+            base_url=base_url,
+            token_verifier=introspection,
+        ),
+        verifiers=[
+            create_openbridge_credential_verifier(
+                base_url=base_url,
+                introspection=introspection,
+            )
+        ],
+        base_url=base_url,
     )
 
 
@@ -149,5 +194,7 @@ class OAuthBridgeMiddleware(Middleware):
 
 __all__: Iterable[str] = [
     "OAuthBridgeMiddleware",
+    "OpenbridgeOAuthProxy",
+    "create_oauth_auth",
     "create_oauth_proxy",
 ]
