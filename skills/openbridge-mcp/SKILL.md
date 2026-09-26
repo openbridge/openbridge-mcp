@@ -14,7 +14,7 @@ description: >
   Mode meta-tools (`tags`, `search`, `get_schema`, `execute`) to the direct
   tool catalog. If a conversation touches Openbridge pipelines or warehouse
   tables, prefer this skill — wrong tool names or stage_ids waste API quota.
-version: "0.1.2"
+version: "0.1.3"
 mcp_servers: mcp-servers.json
 compatibility:
   - openbridge-mcp >= 1.0 (Code Mode tools tags/search/get_schema/execute, FastMCP HTTP transport)
@@ -58,7 +58,7 @@ Trigger on any of:
 - They want to run SQL against an Openbridge-managed table or warehouse
 - They want to backfill / re-run historical data, or cancel/update a
   subscription
-- They paste a refresh token shaped `xxx:yyy` or an Authorization Bearer
+- They paste an Openbridge API credential shaped `xxx:yyy` or an Authorization Bearer
   header pointing at `*.api.openbridge.io`
 - They mention error envelopes, `error_kind`, `_envelope_version`,
   `_meta.rate_limit`, `_meta.normalized`, or other contract fields
@@ -217,8 +217,8 @@ if you see it and ask whether they want Code Mode back on.
 ## Authentication
 
 The **production endpoint is `https://mcp.openbridge.com/mcp/`** and it
-runs in **OAuth proxy mode** — clients authenticate via a browser-based
-OAuth code flow rather than passing raw refresh tokens. There is **no
+runs in **OAuth proxy mode** — clients normally authenticate via a browser-based
+OAuth code flow rather than passing static credentials. There is **no
 `Authorization` header to set** in the client config; FastMCP's OAuthProxy
 handles the redirect, code exchange, and session-token issuance.
 
@@ -231,19 +231,18 @@ For self-hosted instances pointing at a non-production URL, override
 `OPENBRIDGE_AUTH_MODE` selects the mode:
 
 - **`oauth_proxy`** (production default at `mcp.openbridge.com`) — OAuth
-  code flow. Clients authenticate via browser. The MCP client handles
-  token storage and refresh.
+  code flow plus direct Openbridge Bearer credentials. Clients normally
+  authenticate via browser; direct JWTs and `xxx:yyy` API credentials are
+  also verified at the FastMCP boundary.
 - **`refresh_token`** (self-hosted / local-dev convenience) — clients
-  pass `Authorization: Bearer <refresh_token>` (shape `xxx:yyy`) or an
-  unexpired JWT. Server exchanges refresh tokens via the Openbridge auth
-  API and caches per-tenant.
+  pass `Authorization: Bearer <api-credential>` (shape `xxx:yyy`) or an
+  Openbridge JWT. The server exchanges API credentials and introspects every
+  resulting JWT before tool dispatch.
 
-For self-hosted multi-tenant deployments in `refresh_token` mode,
-**`OPENBRIDGE_REQUIRE_CLIENT_AUTH=true` is required** — without it an
-un-authed request silently runs as the server principal (cross-tenant
-data leak). Flag this to any user setting up a shared instance. Not
-applicable in `oauth_proxy` mode — the OAuthProxy enforces auth at the
-transport layer.
+Every auth-enabled deployment requires a verified client credential.
+`OPENBRIDGE_REQUIRE_CLIENT_AUTH` is deprecated and ignored; flag it for
+removal when you see it in a deployment. `OPENBRIDGE_REFRESH_TOKEN` is only a
+server-side fallback when `AUTH_ENABLED=false` for isolated local use.
 
 The embed-cli fallback (separate from the MCP) uses `REFRESH_TOKEN` as an
 env var or a sourced `config.env`. Tokens are sensitive — never echo
@@ -327,7 +326,7 @@ For batch backfills the CSV needs `date,subscription_id` (and optionally
   embed-cli, `--stage` is optional and omission *does* trigger a wildcard,
   which burns upstream rate budget — prefer a CSV with a `stage_id` column
   there.)
-- **Never** echo refresh tokens or JWTs back to the user, into logs, or into
+- **Never** echo API credentials, OAuth tokens, or JWTs back to the user, into logs, or into
   files. Pull them from env vars only.
 - **Always** cite the `subscription_id`, `history_id`, and `error_code` when
   reporting on a failed run — Openbridge support cannot triage without them.

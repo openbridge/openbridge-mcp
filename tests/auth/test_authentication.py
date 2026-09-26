@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,18 @@ def test_deprecated_client_auth_flag_does_not_change_config(monkeypatch):
         enabled=True,
         auth_mode="refresh_token",
     )
+
+
+def test_compose_forwards_auth_mode_without_server_credentials():
+    compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    compose = compose_path.read_text()
+
+    assert (
+        "OPENBRIDGE_AUTH_MODE: ${OPENBRIDGE_AUTH_MODE:-refresh_token}"
+        in compose
+    )
+    assert "OPENBRIDGE_REFRESH_TOKEN:" not in compose
+    assert "OPENBRIDGE_REQUIRE_CLIENT_AUTH:" not in compose
 
 
 @pytest.mark.parametrize(

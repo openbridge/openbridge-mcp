@@ -71,14 +71,8 @@ services:
       # FastMCP task snapshots include request headers and access tokens.
       # Require encryption because Redis persists its queue to an AOF volume.
       FASTMCP_TASKS_ENCRYPTION_KEY: ${FASTMCP_TASKS_ENCRYPTION_KEY:?set FASTMCP_TASKS_ENCRYPTION_KEY in .env}
-      # Multi-tenant fail-closed by default for the production stack.
-      # When this is true, requests without an Authorization: Bearer
-      # header are rejected with McpError(-32001) instead of silently
-      # executing as the OPENBRIDGE_REFRESH_TOKEN principal. Operators
-      # running a deliberately isolated single-tenant container can set
-      # OPENBRIDGE_REQUIRE_CLIENT_AUTH=false only together with the explicit
-      # insecure-remote override below. See README.md → "Per-client authentication".
-      OPENBRIDGE_REQUIRE_CLIENT_AUTH: ${OPENBRIDGE_REQUIRE_CLIENT_AUTH:-true}
+      # AUTH_ENABLED=true always requires a verified client credential.
+      # This override applies only to deliberately auth-disabled containers.
       OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH: ${OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH:-false}
       OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY: ${OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY:-8}
       OPENBRIDGE_ENABLE_QUERY_EXECUTION: ${OPENBRIDGE_ENABLE_QUERY_EXECUTION:-false}
@@ -86,11 +80,9 @@ services:
       MCP_PATH_TOKEN_ENABLED: ${MCP_PATH_TOKEN_ENABLED:-false}
       MCP_PATH_TOKEN_TTL_DAYS: ${MCP_PATH_TOKEN_TTL_DAYS:-7}
       MCP_PATH_TOKEN_MAX_AGE_DAYS: ${MCP_PATH_TOKEN_MAX_AGE_DAYS:-7}
-      # Auth mode: "refresh_token" (default) uses the Bearer-token exchange
-      # middleware. "oauth_proxy" activates FastMCP's built-in OAuthProxy,
-      # which proxies the full OAuth 2.0 flow to Openbridge's auth service
-      # and verifies tokens via introspection. The two modes are mutually
-      # exclusive — choose one per deployment.
+      # The unset-variable compatibility default accepts direct Openbridge
+      # JWTs and xxx:yyy API credentials through FastMCP's native verifier.
+      # Set oauth_proxy for browser OAuth plus those direct Bearer flows.
       OPENBRIDGE_AUTH_MODE: ${OPENBRIDGE_AUTH_MODE:-refresh_token}
       # Required when OPENBRIDGE_AUTH_MODE=oauth_proxy: the externally-
       # reachable base URL of this server, used by FastMCP to construct the
