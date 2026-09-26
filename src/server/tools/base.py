@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import urljoin, urlparse
 
 from fastmcp.server.dependencies import get_access_token
@@ -11,6 +11,15 @@ from src.utils.runtime_security import env_flag
 from src.utils.security import ValidationError, validate_url
 
 logger = get_logger("base_tools")
+
+
+def raise_for_auth_status(response: Any, *, operation: str) -> None:
+    """Raise a body-safe authentication error for upstream authorization failures."""
+    if response.status_code in {401, 403}:
+        raise AuthenticationError(
+            f"Openbridge authorization failed during {operation}; "
+            "reauthenticate and retry"
+        )
 
 
 def get_auth_headers(ctx=None) -> Dict[str, str]:
@@ -79,4 +88,10 @@ def safe_pagination_url(next_url: Optional[str], base_url: str) -> Optional[str]
     return candidate
 
 
-__all__ = ["get_auth_headers", "get_api_timeout", "safe_pagination_url", "AuthenticationError"]
+__all__ = [
+    "AuthenticationError",
+    "get_api_timeout",
+    "get_auth_headers",
+    "raise_for_auth_status",
+    "safe_pagination_url",
+]

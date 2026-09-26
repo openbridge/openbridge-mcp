@@ -99,6 +99,19 @@ def test_auth_disabled_server_exchange_failure_is_actionable(monkeypatch):
         base.get_auth_headers()
 
 
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_raise_for_auth_status_raises_without_response_body(status_code):
+    response = SimpleNamespace(
+        status_code=status_code,
+        text="sensitive upstream body",
+    )
+
+    with pytest.raises(AuthenticationError, match="authorization") as exc_info:
+        base.raise_for_auth_status(response, operation="listing subscriptions")
+
+    assert "sensitive upstream body" not in str(exc_info.value)
+
+
 BASE = "https://remote-identity.api.openbridge.io"
 
 
