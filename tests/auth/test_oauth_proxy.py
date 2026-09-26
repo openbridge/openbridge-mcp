@@ -4,9 +4,11 @@ import hashlib
 import logging
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
-
+from fastmcp import FastMCP
 from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProxy
+from fastmcp.server.dependencies import get_access_token
 
 from src.auth.authentication import AuthConfig, create_openbridge_config
 from src.auth.oauth_proxy import (
@@ -182,6 +184,62 @@ async def test_oauth_reference_token_is_not_logged(
         await oauth_proxy.load_access_token("fastmcp.reference.sensitive")
 
     assert "fastmcp.reference.sensitive" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_oauth_reference_token_reaches_tool_with_upstream_jwt(
+    monkeypatch,
+):
+    monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-signing-key-for-tests")
+    proxy = create_oauth_proxy(base_url="http://localhost")
+    auth = MultiAuth(server=proxy, verifiers=[], base_url="http://localhost")
+    server = FastMCP("oauth-boundary-test", auth=auth)
+    observed_tokens = []
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        access_token = get_access_token()
+        observed_tokens.append(access_token.token if access_token else None)
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    reference_token = proxy.jwt_issuer.issue_access_token(
+        client_id="test-client",
+        scopes=["openid"],
+        jti="test-reference-jti",
+    )
+    monkeypatch.setattr(
+        OAuthProxy,
+        "load_access_token",
+        AsyncMock(
+            return_value=AccessToken(
+                token="verified.upstream.jwt",
+                client_id="upstream-client",
+                scopes=["openid"],
+                claims={"active": True},
+            )
+        ),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+        ) as client:
+            response = await client.post(
+                "/mcp",
+                headers={"Authorization": f"Bearer {reference_token}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "spy", "arguments": {}},
+                },
+            )
+
+    assert response.status_code == 200
+    assert observed_tokens == ["verified.upstream.jwt"]
 
 
 # ---------------------------------------------------------------------------

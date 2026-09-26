@@ -132,22 +132,42 @@ async def test_background_task_restores_openbridge_auth_and_tenant_scope(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_background_tasks_are_isolated_by_tenant_scope(monkeypatch):
-    """A second tenant must not read a task submitted by the first tenant."""
+@pytest.mark.parametrize(
+    ("client_id", "subject_a", "subject_b"),
+    [
+        (
+            "openbridge",
+            "account:101|user:201",
+            "account:102|user:202",
+        ),
+        (
+            "openbridge-oauth",
+            "oauth-session:session-a",
+            "oauth-session:session-b",
+        ),
+    ],
+)
+async def test_background_tasks_are_isolated_by_tenant_scope(
+    monkeypatch,
+    client_id,
+    subject_a,
+    subject_b,
+):
+    """Direct tenants and OAuth sessions cannot read each other's tasks."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     tenant_a = AccessToken(
         token="header.tenant-a.signature",
-        client_id="openbridge",
+        client_id=client_id,
         scopes=[],
-        subject="account:101|user:201",
-        claims={"sub": "account:101|user:201"},
+        subject=subject_a,
+        claims={"sub": subject_a},
     )
     tenant_b = AccessToken(
         token="header.tenant-b.signature",
-        client_id="openbridge",
+        client_id=client_id,
         scopes=[],
-        subject="account:102|user:202",
-        claims={"sub": "account:102|user:202"},
+        subject=subject_b,
+        claims={"sub": subject_b},
     )
 
     server = FastMCP("task-isolation-test")
@@ -161,6 +181,12 @@ async def test_background_tasks_are_isolated_by_tenant_scope(monkeypatch):
     try:
         async with Client(server) as client:
             task = await call_tool_task(client, "tenant_task")
+            owner_status = await task.status()
+            owner_result = await task.result()
+
+            assert owner_status.task_id == task.task_id
+            assert owner_result.data == "complete"
+
             auth_context_var.set(AuthenticatedUser(tenant_b))
             with pytest.raises(McpError, match="not found"):
                 await task.status()
