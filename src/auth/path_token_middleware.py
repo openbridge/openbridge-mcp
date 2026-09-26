@@ -3,14 +3,14 @@
 Enables per-user MCP connection URLs of the form:
     https://mcp.example.com/mcp/{signed-jwt}
 
-The signed JWT contains the Openbridge refresh token as its ``sub`` claim,
+The signed JWT contains the Openbridge API credential as its ``sub`` claim,
 signed with HMAC-SHA256 (HS256) using a shared secret. Any service that knows
 the secret (``MCP_PATH_TOKEN_SECRET``) can generate connection URLs; the MCP
 server verifies them on every inbound request.
 
 Tokens require ``sub``, ``iat``, ``exp``, and ``aud: "openbridge-mcp"`` claims.
 The server bounds both age and declared lifetime and requires ``sub`` to look
-like an Openbridge refresh token. ``iss`` remains intentionally unvalidated so
+like an Openbridge API credential. ``iss`` remains intentionally unvalidated so
 an approved external issuer with the shared secret can create tokens.
 
 **Important:** This middleware must wrap the FastMCP ASGI app at the outermost
@@ -51,7 +51,7 @@ def load_secret() -> str:
 
 class PathTokenMiddleware:
     """Pure ASGI middleware that extracts a signed HS256 JWT from the URL path
-    and injects the embedded refresh token as an ``Authorization: Bearer``
+    and injects the embedded API credential as an ``Authorization: Bearer``
     header before Starlette's router runs.
 
     Starlette instantiates this class as
@@ -86,7 +86,7 @@ class PathTokenMiddleware:
         await self.app(scope, receive, send)
 
     def generate_token(self, refresh_token: str, ttl_days: Optional[int] = None) -> str:
-        """Sign a path token containing the given refresh token."""
+        """Sign a path token containing the given API credential."""
         return _sign_path_token(refresh_token, self._secret, ttl_days)
 
 
@@ -112,7 +112,7 @@ def _sign_path_token(
 
 
 def _verify_path_token(token: str, secret: str) -> Optional[str]:
-    """Verify a bounded HS256 path token and return its refresh token.
+    """Verify a bounded HS256 path token and return its API credential.
 
     The ``iss`` claim is not validated; an approved service sharing the secret
     may issue tokens. Required claims, signature, audience, expiry, subject
@@ -155,7 +155,7 @@ def build_connection_url(base_url: str, refresh_token: str, secret: str) -> str:
 
     Args:
         base_url: Public base URL of the MCP server (e.g. ``https://mcp.example.com``).
-        refresh_token: Openbridge refresh token in ``xxx:yyy`` format.
+        refresh_token: Openbridge API credential in ``xxx:yyy`` format.
         secret: Shared signing secret (value of ``MCP_PATH_TOKEN_SECRET``).
 
     Returns:

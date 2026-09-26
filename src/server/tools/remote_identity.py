@@ -94,7 +94,7 @@ def get_remote_identities(
                 tool="get_remote_identities",
                 summary=f"Remote identity API rejected credentials (HTTP {response.status_code})",
                 hints=[
-                    "Check that Authorization: Bearer contains a valid Openbridge refresh token or unexpired JWT.",
+                    "Check that Authorization: Bearer contains a valid Openbridge API credential or unexpired JWT.",
                     "Verify the token belongs to the intended account/tenant.",
                 ],
             )
