@@ -1,13 +1,14 @@
 """Tests for subscriptions tool - covering edge cases and pagination."""
 
 from functools import partial
+import json
 from types import SimpleNamespace
 
 import pytest
 import requests as _requests
+from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
-from src.auth.simple import AuthenticationError
 from src.server.tools import subscriptions
 
 
@@ -666,8 +667,20 @@ def test_subscription_auth_failures_raise_without_body_leak(
         monkeypatch.setattr(subscriptions.requests, "get", fake_get)
         invoke = subscriptions.get_storage_subscriptions
 
-    with pytest.raises(AuthenticationError, match="authorization") as exc_info:
+    with pytest.raises(ToolError) as exc_info:
         invoke()
 
+    envelope = json.loads(str(exc_info.value))
+    expected_tool = {
+        "list": "get_subscriptions",
+        "item": "get_subscription_by_id",
+        "create": "create_subscription",
+        "update": "update_subscription",
+        "storages": "get_storage_subscriptions",
+        "spm": "get_storage_subscriptions",
+    }[case]
+    assert envelope["error_kind"] == "auth_error"
+    assert envelope["error_code"] == "AUTHENTICATION_ERROR"
+    assert envelope["tool"] == expected_tool
     assert "sensitive upstream body" not in str(exc_info.value)
     assert "sensitive upstream body" not in caplog.text

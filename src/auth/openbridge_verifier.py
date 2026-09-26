@@ -23,12 +23,18 @@ def normalize_verified_identity(access_token: AccessToken) -> AccessToken | None
         return None
 
     subject = f"account:{account_id}|user:{user_id}"
-    expires_at = access_token.claims.get("expires_at") or access_token.expires_at
+    expires_at = access_token.claims.get("expires_at")
+    if expires_at is None:
+        expires_at = access_token.expires_at
+    try:
+        normalized_expiry = int(expires_at) if expires_at is not None else None
+    except (TypeError, ValueError):
+        return None
     return access_token.model_copy(
         update={
             "client_id": "openbridge",
             "subject": subject,
-            "expires_at": int(expires_at) if expires_at else None,
+            "expires_at": normalized_expiry,
             "claims": {**access_token.claims, "sub": subject},
         }
     )

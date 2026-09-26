@@ -634,7 +634,7 @@ git commit -m "refactor: use FastMCP access token context" -m "🤖 Generated wi
 - Modify: `tests/server/tools/test_subscriptions.py`
 
 **Interfaces:**
-- Produces: `raise_for_auth_status(response: requests.Response, *, operation: str) -> None`, raising `AuthenticationError` for `401` and `403` without including response bodies.
+- Produces: `raise_for_auth_status(response, *, tool: str, operation: str) -> None`, raising a FastMCP `ToolError` carrying the v1 `auth_error` envelope for `401` and `403` without including response bodies.
 - Consumes: the helper from every subscriptions response branch that currently converts a non-200 response into an empty or partial success.
 
 - [ ] **Step 1: Write failing downstream auth tests**
@@ -655,8 +655,10 @@ def test_get_subscriptions_raises_on_auth_failure(
         ),
     )
 
-    with pytest.raises(AuthenticationError, match="authorization"):
+    with pytest.raises(ToolError) as exc_info:
         subscriptions.get_subscriptions()
+
+    assert json.loads(str(exc_info.value))["error_kind"] == "auth_error"
 ```
 
 Assert the exception and captured logs exclude `sensitive upstream body`.
@@ -677,12 +679,14 @@ Expected: the list case returns `[]` instead of raising.
 Add this behavior before existing status handling:
 
 ```python
-def raise_for_auth_status(response, *, operation: str) -> None:
+def raise_for_auth_status(response, *, tool: str, operation: str) -> None:
     if response.status_code in {401, 403}:
-        raise AuthenticationError(
-            f"Openbridge authorization failed during {operation}; "
-            "reauthenticate and retry"
+        envelope = auth_error(
+            tool=tool,
+            summary=f"Openbridge authorization failed during {operation}",
+            hints=["Reconnect with a valid credential, then retry."],
         )
+        raise ToolError(json.dumps(envelope))
 ```
 
 Call it for each subscriptions HTTP response before a branch that returns an

@@ -1,6 +1,8 @@
+import json
 from types import SimpleNamespace
 
 import pytest
+from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken
 
 from src.auth.simple import AuthenticationError
@@ -106,9 +108,17 @@ def test_raise_for_auth_status_raises_without_response_body(status_code):
         text="sensitive upstream body",
     )
 
-    with pytest.raises(AuthenticationError, match="authorization") as exc_info:
-        base.raise_for_auth_status(response, operation="listing subscriptions")
+    with pytest.raises(ToolError) as exc_info:
+        base.raise_for_auth_status(
+            response,
+            tool="get_subscriptions",
+            operation="listing subscriptions",
+        )
 
+    envelope = json.loads(str(exc_info.value))
+    assert envelope["error_kind"] == "auth_error"
+    assert envelope["error_code"] == "AUTHENTICATION_ERROR"
+    assert envelope["tool"] == "get_subscriptions"
     assert "sensitive upstream body" not in str(exc_info.value)
 
 

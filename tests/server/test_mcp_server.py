@@ -564,3 +564,42 @@ async def test_native_http_boundary_exposes_verified_jwt_to_tool(
 
     assert response.status_code == 200
     assert observed_tokens == [expected_jwt]
+
+
+@pytest.mark.asyncio
+async def test_native_http_boundary_rejects_malformed_verified_expiry():
+    auth = MagicMock()
+    introspection = AsyncMock()
+    introspection.verify_token.return_value = AccessToken(
+        token="header.payload.signature",
+        client_id="unknown",
+        scopes=[],
+        claims={
+            "active": True,
+            "account_id": 101,
+            "user_id": 202,
+            "expires_at": "not-a-timestamp",
+        },
+    )
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("auth-boundary-test", auth=verifier)
+    calls = 0
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        nonlocal calls
+        calls += 1
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    async with app.router.lifespan_context(app):
+        response = await _post_tool_call(
+            app,
+            "Bearer header.payload.signature",
+        )
+
+    assert response.status_code == 401
+    assert calls == 0

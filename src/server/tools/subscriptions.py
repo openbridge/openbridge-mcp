@@ -76,7 +76,11 @@ def get_subscriptions(
             # Fail-fast: subscription lists are consumed as complete inventories.
             logger.error("Subscriptions request failed: %s", exc)
             return []
-        raise_for_auth_status(response, operation="listing subscriptions")
+        raise_for_auth_status(
+            response,
+            tool="get_subscriptions",
+            operation="listing subscriptions",
+        )
         if response.status_code == 200:
             subscriptions.extend(response.json().get("data", []))
             # Paginate if necessary
@@ -134,7 +138,11 @@ def get_subscription_by_id(
                 "received_type": type(exc).__name__,
             }],
         )
-    raise_for_auth_status(response, operation="retrieving a subscription")
+    raise_for_auth_status(
+        response,
+        tool="get_subscription_by_id",
+        operation="retrieving a subscription",
+    )
     if response.status_code != 200:
         logger.error(f"Failed to retrieve subscription {subscription_id}: {response.status_code} - {response.text}")
         return not_found(
@@ -191,7 +199,11 @@ def create_subscription(
     except requests.RequestException as exc:
         logger.warning("Create subscription request failed: %s", exc)
         return None
-    raise_for_auth_status(response, operation="creating a subscription")
+    raise_for_auth_status(
+        response,
+        tool="create_subscription",
+        operation="creating a subscription",
+    )
     if response.status_code not in (200, 201):
         logger.error("Failed to create subscription: %s - %s", response.status_code, response.text)
         return None
@@ -237,7 +249,11 @@ def update_subscription(
     except requests.RequestException as exc:
         logger.warning("Update subscription %s request failed: %s", subscription_id, exc)
         return None
-    raise_for_auth_status(response, operation="updating a subscription")
+    raise_for_auth_status(
+        response,
+        tool="update_subscription",
+        operation="updating a subscription",
+    )
     if response.status_code not in (200, 202):
         logger.error(
             "Failed to update subscription %s: %s - %s",
@@ -294,7 +310,11 @@ def get_storage_subscriptions(
     except requests.RequestException as exc:
         logger.error("Storages request failed: %s", exc)
         return []
-    raise_for_auth_status(storages_response, operation="listing storage subscriptions")
+    raise_for_auth_status(
+        storages_response,
+        tool="get_storage_subscriptions",
+        operation="listing storage subscriptions",
+    )
     if storages_response.status_code != 200:
         logger.error(
             "Failed to retrieve storages: %s - %s",
@@ -361,7 +381,11 @@ def get_storage_subscriptions(
             )
             result.append({"storage_type": "unknown", **storage})
             continue
-        raise_for_auth_status(spm_resp, operation="retrieving storage parameters")
+        raise_for_auth_status(
+            spm_resp,
+            tool="get_storage_subscriptions",
+            operation="retrieving storage parameters",
+        )
         if spm_resp.status_code != 200:
             logger.warning(
                 "SPM call for subscription %s failed: %s",

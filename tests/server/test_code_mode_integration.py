@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -33,7 +34,9 @@ from mcp.server.auth.middleware.auth_context import auth_context_var
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from src.server.code_mode import _EnvelopeUnwrappingCodeMode
+from src.server.error_envelope_middleware import ErrorEnvelopeMiddleware
 from src.server.mcp_server import create_mcp_server
+from src.server.tools.base import raise_for_auth_status
 
 
 CODE_MODE_TOOL_SURFACE = {"tags", "search", "get_schema", "execute"}
@@ -134,6 +137,12 @@ class _NestedToolSandbox:
         return await nested
 
 
+class _AuthFailureSandbox:
+    async def run(self, code, external_functions):
+        del code
+        return await external_functions["call_tool"]("auth_failure", {})
+
+
 @pytest.mark.asyncio
 async def test_code_mode_nested_call_preserves_native_access_token():
     server = FastMCP("code-mode-native-auth")
@@ -171,3 +180,42 @@ async def test_code_mode_nested_call_preserves_native_access_token():
     assert json.loads(result.content[0].text) == {
         "result": "verified.jwt.token"
     }
+
+
+@pytest.mark.asyncio
+async def test_code_mode_returns_downstream_auth_error_envelope():
+    server = FastMCP("code-mode-auth-envelope")
+    server.add_middleware(ErrorEnvelopeMiddleware())
+
+    @server.tool(name="auth_failure")
+    async def auth_failure() -> None:
+        response = SimpleNamespace(
+            status_code=403,
+            text="sensitive upstream body",
+        )
+        raise_for_auth_status(
+            response,
+            tool="auth_failure",
+            operation="listing subscriptions",
+        )
+
+    server.add_transform(
+        _EnvelopeUnwrappingCodeMode(
+            sandbox_provider=_AuthFailureSandbox(),
+            discovery_tools=[],
+        )
+    )
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "execute",
+            {"code": "ignored"},
+            raise_on_error=False,
+    )
+
+    assert result.is_error is False
+    payload = json.loads(result.content[0].text)
+    envelope = payload.get("result", payload)
+    assert envelope["error_kind"] == "auth_error"
+    assert envelope["error_code"] == "AUTHENTICATION_ERROR"
+    assert "sensitive upstream body" not in result.content[0].text

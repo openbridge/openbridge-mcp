@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 from urllib.parse import urljoin, urlparse
 
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 
 from src.auth.simple import AuthenticationError, get_api_timeout, get_auth
+from src.utils.envelope import auth_error
 from src.utils.logging import get_logger
 from src.utils.runtime_security import env_flag
 from src.utils.security import ValidationError, validate_url
@@ -13,13 +16,20 @@ from src.utils.security import ValidationError, validate_url
 logger = get_logger("base_tools")
 
 
-def raise_for_auth_status(response: Any, *, operation: str) -> None:
-    """Raise a body-safe authentication error for upstream authorization failures."""
+def raise_for_auth_status(
+    response: Any,
+    *,
+    tool: str,
+    operation: str,
+) -> None:
+    """Raise a body-safe auth envelope for upstream authorization failures."""
     if response.status_code in {401, 403}:
-        raise AuthenticationError(
-            f"Openbridge authorization failed during {operation}; "
-            "reauthenticate and retry"
+        envelope = auth_error(
+            tool=tool,
+            summary=f"Openbridge authorization failed during {operation}",
+            hints=["Reconnect with a valid credential, then retry."],
         )
+        raise ToolError(json.dumps(envelope))
 
 
 def get_auth_headers(ctx=None) -> Dict[str, str]:

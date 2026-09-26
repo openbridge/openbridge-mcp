@@ -315,7 +315,7 @@ MCP_JWT_SIGNING_KEY=
 ### URL-Embedded Auth (Claude Custom Connectors, Deprecated)
 
 Path tokens are disabled by default and remain a legacy compatibility mechanism
-for `refresh_token` mode. They put a bearer-equivalent refresh credential in the
+for `refresh_token` mode. They put a bearer-equivalent API credential in the
 URL, where browsers, proxies, observability systems, and copied links can expose
 it. Prefer OAuth proxy mode or an Authorization header. These controls reduce
 exposure but do not close OB-MCP-02; replacing URL credentials with opaque,

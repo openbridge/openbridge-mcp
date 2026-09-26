@@ -188,11 +188,11 @@ Uses FastMCP's native access-token dependency for authenticated requests.
 | Auth-disabled fallback credential absent | Return `{}`, debug-log. |
 | Auth-disabled exchange raises another `AuthenticationError` | Re-raise with an actionable message. |
 
-### `raise_for_auth_status(response, operation=...) -> None`
+### `raise_for_auth_status(response, tool=..., operation=...) -> None`
 
 | Trigger | Behavior |
 |---|---|
-| Upstream status `401` or `403` | Raise body-safe `AuthenticationError` naming the operation. |
+| Upstream status `401` or `403` | Raise `ToolError` containing a body-safe v1 `auth_error` envelope. |
 | Any other status | Return `None`. |
 
 ### `safe_pagination_url(next_url, base_url) -> Optional[str]`
@@ -244,8 +244,8 @@ raise. `None`, empty, short, and non-string inputs return `False`.
 | Trigger | Behavior |
 |---|---|
 | `requests.post` raises | Raise `AuthenticationError("Openbridge auth request failed")`. |
-| Non-200 response | Raise `AuthenticationError("Failed to convert refresh token to JWT: ...")` (via `raise_for_status`). |
-| 200 non-JSON | Raise `AuthenticationError("Failed to convert refresh token to JWT: ...")`. |
+| Non-200 response | Raise `AuthenticationError("Failed to convert Openbridge API credential to JWT: ...")` (via `raise_for_status`). |
+| 200 non-JSON | Raise `AuthenticationError("Failed to convert Openbridge API credential to JWT: ...")`. |
 | 200 JSON missing `data.attributes.token` | Raise `AuthenticationError("Openbridge auth response did not include a token")`. |
 
 ---
