@@ -2,35 +2,63 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastmcp.server.auth import AccessToken
 
-from src.auth.authentication import OpenbridgeAuthMiddleware
 from src.auth.exchange_coordinator import TokenExchangeCoordinator
+from src.auth.openbridge_verifier import (
+    OpenbridgeCredentialVerifier,
+    credential_cache_key,
+)
 from src.auth.simple import _CachedToken, _InMemoryLRUTokenCache
 
 
 @pytest.mark.asyncio
-async def test_exchange_does_not_block_event_loop(monkeypatch):
+async def test_exchange_does_not_block_event_loop():
     started = threading.Event()
     release_exchange = threading.Event()
+    exchange_calls = 0
+    exchange_lock = threading.Lock()
 
     class BlockingAuth:
         def exchange_token(self, _token):
+            nonlocal exchange_calls
+            with exchange_lock:
+                exchange_calls += 1
             started.set()
             if not release_exchange.wait(timeout=1):
                 raise TimeoutError("test exchange was not released")
             return "tenant-jwt"
 
-    context = SimpleNamespace(fastmcp_context=SimpleNamespace(set_state=lambda *_args: None))
-    request = SimpleNamespace(headers={"authorization": "Bearer account123:secret123"})
-    monkeypatch.setattr("src.auth.authentication.get_http_request", lambda: request)
-    middleware = OpenbridgeAuthMiddleware(BlockingAuth())
-    call_next = AsyncMock(return_value="ok")
+    class RecordingCoordinator(TokenExchangeCoordinator):
+        def __init__(self):
+            super().__init__(max_workers=1)
+            self.keys = []
 
-    exchange_task = asyncio.create_task(middleware.on_request(context, call_next))
+        async def resolve(self, key, operation):
+            self.keys.append(key)
+            return await super().resolve(key, operation)
+
+    introspection = AsyncMock()
+    introspection.verify_token.return_value = AccessToken(
+        token="tenant-jwt",
+        client_id="unknown",
+        scopes=[],
+        claims={"active": True, "account_id": 101, "user_id": 202},
+    )
+    coordinator = RecordingCoordinator()
+    verifier = OpenbridgeCredentialVerifier(
+        auth=BlockingAuth(),
+        introspection=introspection,
+        exchange_coordinator=coordinator,
+    )
+
+    credential = "account123:secret123"
+    exchange_tasks = [
+        asyncio.create_task(verifier.verify_token(credential)) for _ in range(2)
+    ]
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     try:
@@ -38,10 +66,12 @@ async def test_exchange_does_not_block_event_loop(monkeypatch):
         assert loop.time() - started_at < 0.25
     finally:
         release_exchange.set()
-    try:
-        await exchange_task
-    except TimeoutError:
-        pass
+
+    results = await asyncio.gather(*exchange_tasks)
+
+    assert all(result is not None for result in results)
+    assert exchange_calls == 1
+    assert coordinator.keys == [credential_cache_key(credential)] * 2
 
 
 @pytest.mark.asyncio
