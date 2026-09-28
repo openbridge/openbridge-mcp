@@ -14,7 +14,7 @@ description: >
   Mode meta-tools (`tags`, `search`, `get_schema`, `execute`) to the direct
   tool catalog. If a conversation touches Openbridge pipelines or warehouse
   tables, prefer this skill — wrong tool names or stage_ids waste API quota.
-version: "0.1.2"
+version: "0.1.4"
 mcp_servers: mcp-servers.json
 compatibility:
   - openbridge-mcp >= 1.0 (Code Mode tools tags/search/get_schema/execute, FastMCP HTTP transport)
@@ -37,10 +37,10 @@ historical/backfill data pulls.
 You drive all of that either through:
 
 1. **Openbridge MCP** — the FastMCP server in `openbridge-mcp/`. Default mode
-   is Code Mode: clients see only `tags`, `search`, `get_schema`/`get_schemas`,
-   `execute` and run Python in a sandbox that calls individual tools. This is
-   the recommended path. Read **`references/code-mode.md`** before writing any
-   `execute()` block.
+   is Code Mode: clients see only `tags`, `search`, `get_schema`, and `execute`,
+   then run Python in a sandbox that invokes catalog tools through
+   `call_tool(name, arguments)`. This is the recommended path. Read
+   **`references/code-mode.md`** before writing any `execute()` block.
 2. **embed-cli** — shell/Docker CLI (`./bin/embed-cli` or
    `openbridge/embed-cli` Docker image). Same APIs, no sandbox. Use when the
    MCP server isn't attached or for batch CSV jobs.
@@ -58,7 +58,7 @@ Trigger on any of:
 - They want to run SQL against an Openbridge-managed table or warehouse
 - They want to backfill / re-run historical data, or cancel/update a
   subscription
-- They paste a refresh token shaped `xxx:yyy` or an Authorization Bearer
+- They paste an Openbridge API credential shaped `xxx:yyy` or an Authorization Bearer
   header pointing at `*.api.openbridge.io`
 - They mention error envelopes, `error_kind`, `_envelope_version`,
   `_meta.rate_limit`, `_meta.normalized`, or other contract fields
@@ -86,7 +86,8 @@ Tool availability on the openbridge MCP is **not** uniform across deployments.
 Before any workflow that depends on a specific tool, confirm it's actually
 registered. Two facts that have caused failures in production:
 
-- **Always call `get_capabilities()` once per session.** It returns which
+- **Always call `get_capabilities` once per session.** In Code Mode, invoke it
+  inside `execute` as `await call_tool("get_capabilities", {})`. It returns which
   tools are enabled, the env vars they require, and any `disabled_reason`.
   Use it instead of guessing from a tool name list.
 - **Privileged tools are default-off.** `get_amazon_api_access_token`,
@@ -176,9 +177,9 @@ attributes)` or `cancel_subscription("…")` for changes (also string IDs).
 > `subscription_id` as `str` (the by-id / update / cancel family), others as
 > `int` (`get_jobs`, `create_job`). Some take `remote_identity_id` as `str`
 > (the remote_identity tools), others as `int` (the Amazon service tools).
-> Don't assume uniformity — when in doubt, `await get_schema('<tool_name>')`
-> first. The skill mirrors the server's mixed types because they are real;
-> the server team is tracking unification.
+> Don't assume uniformity — when in doubt, call the `get_schema` meta-tool with
+> `tools=["<tool_name>"]` before `execute`. The skill mirrors the server's mixed
+> types because they are real; the server team is tracking unification.
 
 ## Code Mode is the default surface
 
@@ -189,20 +190,21 @@ tools the client sees are:
   on this server; family-grouping not yet populated)
 - `search(query)` — find tools by intent — **this is your real discovery
   tool**
-- `get_schema(tool_name)` / `get_schemas([…])` — get the input/output JSON
-  schemas
-- `execute(code)` — run Python in a sandbox that can `await` the individual
-  Openbridge tools
+- `get_schema(tools=[…])` — get parameter details for one or more tools
+- `execute(code)` — run Python in a sandbox with
+  `await call_tool("tool_name", {"argument": value})`
 
-If the user's client shows only those four (plus optionally `tags`), they're
+If the user's client shows only these meta-tools (`tags` is optional), they're
 in Code Mode and you must build calls inside `execute()`. Do **not** try to
 call e.g. `get_jobs()` directly — it isn't exposed. The pattern is:
 
 ```python
-# Inside execute()
-schema = await get_schema("get_jobs")  # only if you need to confirm shape
-# Note: is_primary is a STRING ('true'/'false'), not a Python bool
-jobs = await get_jobs(subscription_id=987, status="active", is_primary="true")
+# Before execute(), call get_schema(tools=["get_jobs"]) if needed.
+# Inside execute(), is_primary is a STRING, not a Python bool.
+jobs = await call_tool(
+    "get_jobs",
+    {"subscription_id": 987, "status": "active", "is_primary": "true"},
+)
 return jobs
 ```
 
@@ -217,8 +219,8 @@ if you see it and ask whether they want Code Mode back on.
 ## Authentication
 
 The **production endpoint is `https://mcp.openbridge.com/mcp/`** and it
-runs in **OAuth proxy mode** — clients authenticate via a browser-based
-OAuth code flow rather than passing raw refresh tokens. There is **no
+runs in **OAuth proxy mode** — clients normally authenticate via a browser-based
+OAuth code flow rather than passing static credentials. There is **no
 `Authorization` header to set** in the client config; FastMCP's OAuthProxy
 handles the redirect, code exchange, and session-token issuance.
 
@@ -231,19 +233,18 @@ For self-hosted instances pointing at a non-production URL, override
 `OPENBRIDGE_AUTH_MODE` selects the mode:
 
 - **`oauth_proxy`** (production default at `mcp.openbridge.com`) — OAuth
-  code flow. Clients authenticate via browser. The MCP client handles
-  token storage and refresh.
+  code flow plus direct Openbridge Bearer credentials. Clients normally
+  authenticate via browser; direct JWTs and `xxx:yyy` API credentials are
+  also verified at the FastMCP boundary.
 - **`refresh_token`** (self-hosted / local-dev convenience) — clients
-  pass `Authorization: Bearer <refresh_token>` (shape `xxx:yyy`) or an
-  unexpired JWT. Server exchanges refresh tokens via the Openbridge auth
-  API and caches per-tenant.
+  pass `Authorization: Bearer <api-credential>` (shape `xxx:yyy`) or an
+  Openbridge JWT. The server exchanges API credentials and introspects every
+  resulting JWT before tool dispatch.
 
-For self-hosted multi-tenant deployments in `refresh_token` mode,
-**`OPENBRIDGE_REQUIRE_CLIENT_AUTH=true` is required** — without it an
-un-authed request silently runs as the server principal (cross-tenant
-data leak). Flag this to any user setting up a shared instance. Not
-applicable in `oauth_proxy` mode — the OAuthProxy enforces auth at the
-transport layer.
+Every auth-enabled deployment requires a verified client credential.
+`OPENBRIDGE_REQUIRE_CLIENT_AUTH` is deprecated and ignored; flag it for
+removal when you see it in a deployment. `OPENBRIDGE_REFRESH_TOKEN` is only a
+server-side fallback when `AUTH_ENABLED=false` for isolated local use.
 
 The embed-cli fallback (separate from the MCP) uses `REFRESH_TOKEN` as an
 env var or a sourced `config.env`. Tokens are sensitive — never echo
@@ -327,7 +328,7 @@ For batch backfills the CSV needs `date,subscription_id` (and optionally
   embed-cli, `--stage` is optional and omission *does* trigger a wildcard,
   which burns upstream rate budget — prefer a CSV with a `stage_id` column
   there.)
-- **Never** echo refresh tokens or JWTs back to the user, into logs, or into
+- **Never** echo API credentials, OAuth tokens, or JWTs back to the user, into logs, or into
   files. Pull them from env vars only.
 - **Always** cite the `subscription_id`, `history_id`, and `error_code` when
   reporting on a failed run — Openbridge support cannot triage without them.

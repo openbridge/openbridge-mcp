@@ -11,12 +11,14 @@ types verbatim** and the failure shape.
 > `get_jobs` / `create_job` but `str` on `get_subscription_by_id` /
 > `update_subscription` / `cancel_subscription`; `remote_identity_id` is
 > `str` on `get_remote_identity*` but `int` on the Amazon service tools.
-> The skill mirrors the server; **do not normalize**. Authoritative source
-> for any tool: `get_schema(tool_name)` against the live server. The MCP
-> server team is tracking unification — see CONTRACT.md for status.
+> The skill mirrors the server; **do not normalize**. In Code Mode, the
+> authoritative source is `get_schema(tools=["tool_name"])`; direct-catalog
+> clients can inspect the schema returned by `tools/list`. The MCP server team
+> is tracking unification — see CONTRACT.md for status.
 
-For full input/output JSON schemas, call `get_schema(tool_name)` against
-the live server — the schemas drift faster than this doc.
+For full JSON schemas in Code Mode, call
+`get_schema(tools=["tool_name"], detail="full")` against the live server —
+the schemas drift faster than this doc.
 
 ## Capabilities
 
@@ -90,7 +92,7 @@ on miss.
 ### `create_subscription(attributes: Dict[str, Any])`
 
 JSON:API attributes payload. Required fields vary by product — call
-`get_schema('create_subscription')` first.
+`get_schema(tools=["create_subscription"])` in Code Mode first.
 
 ### `update_subscription(subscription_id: str, attributes: Dict[str, Any])`
 

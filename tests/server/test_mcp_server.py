@@ -1,16 +1,22 @@
 import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken
+from fastmcp.server.dependencies import get_access_token
 
+from src.auth.openbridge_verifier import OpenbridgeCredentialVerifier
 from src.server import mcp_server
 from src.server.tools.tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
 
 
 class FakeAuthConfig:
-    def __init__(self):
-        self.enabled = False
-        self.auth_mode = "refresh_token"
+    def __init__(self, *, enabled=False, auth_mode="refresh_token"):
+        self.enabled = enabled
+        self.auth_mode = auth_mode
 
 
 class FakeFastMCP:
@@ -70,7 +76,6 @@ def disable_code_mode_by_default(monkeypatch):
 
 def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     """Test that query validation tools are registered when API key is present."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     # Set an API key to enable query validation tools
@@ -79,21 +84,11 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
     monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-
-    def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        assert config is fake_config
-        assert jwt_middleware is False
-        assert auth_manager == "auth-manager"
-        return [fake_middleware]
-
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
 
     assert isinstance(server, FakeFastMCP)
-    assert fake_middleware in server.middleware
     assert len(server.extensions) == 1
 
     expected_tools = {
@@ -126,7 +121,6 @@ def test_create_mcp_server_registers_expected_tools_with_api_key(monkeypatch):
 
 def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
     """Test that query validation tools are NOT registered when API key is missing."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     # Ensure no API keys are set
@@ -134,12 +128,6 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
     monkeypatch.delenv("FASTMCP_SAMPLING_API_KEY", raising=False)
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-
-    def fake_create_auth_middleware(config, *, jwt_middleware, auth_manager):
-        return [fake_middleware]
-
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", fake_create_auth_middleware)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -176,7 +164,6 @@ def test_create_mcp_server_without_api_key_skips_validation_tools(monkeypatch):
 
 def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     """Test that FASTMCP_SAMPLING_API_KEY also enables query validation tools."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     # Set FASTMCP_SAMPLING_API_KEY instead of OPENAI_API_KEY
@@ -185,8 +172,6 @@ def test_create_mcp_server_with_fastmcp_api_key(monkeypatch):
     monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -202,12 +187,6 @@ def test_query_execution_defaults_disabled(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", raising=False)
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(
-        mcp_server,
-        "create_auth_middleware",
-        lambda *args, **kwargs: [object()],
-    )
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -217,15 +196,12 @@ def test_query_execution_defaults_disabled(monkeypatch):
 
 
 def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setenv("FASTMCP_SAMPLING_API_KEY", "test-fastmcp-key")
     monkeypatch.setenv("OPENBRIDGE_ENABLE_QUERY_EXECUTION", "false")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -236,12 +212,9 @@ def test_create_mcp_server_with_query_execution_disabled(monkeypatch):
 
 def test_health_endpoint(monkeypatch):
     """Test that health check endpoint is registered."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
     server = mcp_server.create_mcp_server()
@@ -266,14 +239,11 @@ def test_get_service_version_returns_unknown_when_package_missing(monkeypatch):
 
 
 def test_code_mode_enabled_by_default_applies_transform(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
     fake_transform = object()
 
     monkeypatch.delenv("CODE_MODE", raising=False)
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "create_code_mode_transform", lambda: fake_transform)
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
 
@@ -283,13 +253,10 @@ def test_code_mode_enabled_by_default_applies_transform(monkeypatch):
 
 
 def test_code_mode_opt_out_disables_transform(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setenv("CODE_MODE", "false")
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     def should_not_be_called():
         raise AssertionError("create_code_mode_transform should not be called when CODE_MODE=false")
 
@@ -302,13 +269,10 @@ def test_code_mode_opt_out_disables_transform(monkeypatch):
 
 
 def test_code_mode_missing_dependency_falls_back_to_direct_tools(monkeypatch):
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.delenv("CODE_MODE", raising=False)
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     def raise_import_error():
         raise ImportError("missing sandbox package")
 
@@ -334,12 +298,9 @@ def test_code_mode_missing_dependency_falls_back_to_direct_tools(monkeypatch):
 
 def _build_server_with_defaults(monkeypatch) -> "FakeFastMCP":
     """Wire up the common fakes so a single helper can build a test server."""
-    fake_middleware = object()
     fake_config = FakeAuthConfig()
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: fake_config)
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(mcp_server, "create_auth_middleware", lambda *args, **kwargs: [fake_middleware])
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
     return mcp_server.create_mcp_server()
 
@@ -443,3 +404,202 @@ def test_no_orphan_manifest_entries(monkeypatch):
     # And the inverse: nothing registered should be missing from the manifest.
     extras = reachable - set(TOOL_MANIFEST.keys())
     assert not extras, f"Tools registered without a manifest entry: {sorted(extras)}"
+
+
+def test_oauth_mode_uses_multi_auth_provider(monkeypatch):
+    oauth_auth = object()
+    config = FakeAuthConfig(enabled=True, auth_mode="oauth_proxy")
+    monkeypatch.setenv("MCP_BASE_URL", "https://mcp.example.test")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: config)
+    monkeypatch.setattr(mcp_server, "create_oauth_auth", lambda **_kwargs: oauth_auth)
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert server.auth is oauth_auth
+    assert len(server.middleware) == 1
+
+
+def test_refresh_token_mode_uses_native_credential_verifier(monkeypatch):
+    credential_verifier = object()
+    config = FakeAuthConfig(enabled=True, auth_mode="refresh_token")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: config)
+    monkeypatch.setattr(
+        mcp_server,
+        "create_openbridge_credential_verifier",
+        lambda: credential_verifier,
+    )
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert server.auth is credential_verifier
+    assert len(server.middleware) == 1
+
+
+def test_auth_disabled_installs_no_auth_provider(monkeypatch):
+    config = FakeAuthConfig(enabled=False, auth_mode="oauth_proxy")
+    monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: config)
+    monkeypatch.setattr(
+        mcp_server,
+        "create_oauth_auth",
+        lambda **_kwargs: pytest.fail("OAuth provider must not be constructed"),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "create_openbridge_credential_verifier",
+        lambda: pytest.fail("Credential verifier must not be constructed"),
+    )
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_mcp_server()
+
+    assert server.auth is None
+    assert len(server.middleware) == 1
+
+
+async def _post_tool_call(app, authorization):
+    headers = {}
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        return await client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "spy", "arguments": {}},
+            },
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        None,
+        "Basic malformed",
+        "Bearer bogus-token",
+        "Bearer header.payload.bad",
+        "Bearer account123:bad-secret",
+    ],
+)
+async def test_native_http_boundary_rejects_invalid_credentials_before_tool(
+    authorization,
+):
+    auth = MagicMock()
+    auth.exchange_token.side_effect = RuntimeError("exchange rejected")
+    introspection = AsyncMock(return_value=None)
+    introspection.verify_token.return_value = None
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("auth-boundary-test", auth=verifier)
+    calls = 0
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        nonlocal calls
+        calls += 1
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    async with app.router.lifespan_context(app):
+        response = await _post_tool_call(app, authorization)
+
+    assert response.status_code == 401
+    assert calls == 0
+    assert '"isError":false' not in response.text
+    assert '"result":[]' not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("credential", "expected_jwt"),
+    [
+        ("header.payload.signature", "header.payload.signature"),
+        ("account123:api-secret", "exchanged.jwt.token"),
+    ],
+)
+async def test_native_http_boundary_exposes_verified_jwt_to_tool(
+    credential,
+    expected_jwt,
+):
+    auth = MagicMock()
+    auth.exchange_token.return_value = "exchanged.jwt.token"
+    introspection = AsyncMock()
+
+    async def verify(candidate):
+        return AccessToken(
+            token=candidate,
+            client_id="unknown",
+            scopes=[],
+            claims={"active": True, "account_id": 101, "user_id": 202},
+        )
+
+    introspection.verify_token.side_effect = verify
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("auth-boundary-test", auth=verifier)
+    observed_tokens = []
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        access_token = get_access_token()
+        observed_tokens.append(access_token.token if access_token else None)
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    async with app.router.lifespan_context(app):
+        response = await _post_tool_call(app, f"Bearer {credential}")
+
+    assert response.status_code == 200
+    assert observed_tokens == [expected_jwt]
+
+
+@pytest.mark.asyncio
+async def test_native_http_boundary_rejects_malformed_verified_expiry():
+    auth = MagicMock()
+    introspection = AsyncMock()
+    introspection.verify_token.return_value = AccessToken(
+        token="header.payload.signature",
+        client_id="unknown",
+        scopes=[],
+        claims={
+            "active": True,
+            "account_id": 101,
+            "user_id": 202,
+            "expires_at": "not-a-timestamp",
+        },
+    )
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("auth-boundary-test", auth=verifier)
+    calls = 0
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        nonlocal calls
+        calls += 1
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    async with app.router.lifespan_context(app):
+        response = await _post_tool_call(
+            app,
+            "Bearer header.payload.signature",
+        )
+
+    assert response.status_code == 401
+    assert calls == 0

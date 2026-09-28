@@ -2,8 +2,9 @@
 
 End-to-end recipes for the four workflows users hit most. Each starts with
 the question to ask the user, lists the tool sequence, and shows the calling
-pattern. Adapt to Code Mode (`execute(...)`) or direct catalog calls based on
-the deployment.
+pattern. Examples use Code Mode's `call_tool(name, arguments)` bridge inside
+`execute(...)`. On a direct-catalog deployment, call the named tool directly
+with the same arguments.
 
 Before job creation, subscription mutation, history-status updates, or access
 token retrieval, inspect `get_capabilities()`. Those privileged tools are
@@ -19,7 +20,7 @@ against…", "show me data from…".
 ### Step 0 — check capabilities (BEFORE you promise the user a query)
 
 ```python
-caps = await get_capabilities()
+caps = await call_tool("get_capabilities", {})
 query_enabled = caps.get("validate_query", {}).get("enabled", False)
 ```
 
@@ -38,7 +39,7 @@ path where `query_enabled` is `True`.
 ### Step 1 — find the product
 
 ```python
-products = await search_products("orders")
+products = await call_tool("search_products", {"query": "orders"})
 # Use BARE 1-2 word terms. Multi-word product names and full phrases fail
 # silently — "SP Orders", "Seller Partner orders", "Amazon orders" all
 # return []. The em-dash in "Amazon Ads — Sponsored Products" also kills
@@ -66,9 +67,12 @@ adding qualifiers.
 ### Step 2 — list tables for that product
 
 ```python
-tables = await list_product_tables(product_id=50)
+tables = await call_tool("list_product_tables", {"product_id": 50})
 # Or filter to just what's enabled for one subscription:
-tables = await list_product_tables(product_id=50, subscription_id=128853)
+tables = await call_tool(
+    "list_product_tables",
+    {"product_id": 50, "subscription_id": 128853},
+)
 # returns: [{"name": "amzn_ads_sb_campaigns", "stage_id": 1004, "id": 2184}, ...]
 ```
 
@@ -83,7 +87,10 @@ does *my* pipeline produce?".
 # product_id parameter — even though list_product_tables returned (id,
 # name, stage_id) tuples, the schema lookup is name-only. Passing
 # product_id raises a v1 validation error.
-schema = await get_table_schema(table_name="amzn_ads_sb_campaigns")  # _master suffix optional
+schema = await call_tool(
+    "get_table_schema",
+    {"table_name": "amzn_ads_sb_campaigns"},  # _master suffix optional
+)
 # returns: {fields: [...], rules: [...], destination: {"tablename": "..."}, ...}
 ```
 
@@ -124,11 +131,11 @@ diagnostic for the user.
 
 ```python
 sql = "SELECT campaign_id, SUM(cost_7d) FROM amzn_ads_sb_campaigns_master WHERE date >= '2024-01-01' GROUP BY 1 LIMIT 100"
-v = await validate_query(query=sql, key_name="key finance")
+v = await call_tool("validate_query", {"query": sql, "key_name": "key finance"})
 if not v.get("decision", {}).get("allowed", False):
     # Surface the validator's reasoning; do NOT call execute_query
     return {"validation_failed": v}
-rows = await execute_query(query=sql, key_name="key finance")
+rows = await call_tool("execute_query", {"query": sql, "key_name": "key finance"})
 return {"rows": rows[:50], "row_count": len(rows)}
 ```
 
@@ -165,10 +172,12 @@ the user explicitly so they're consenting on the record. Result of
 ### Step 1 — confirm the subscription
 
 ```python
-sub = await get_subscription_by_id(subscription_id="128853")
+sub = await call_tool(
+    "get_subscription_by_id", {"subscription_id": "128853"}
+)
 # Note: subscription_id is a STRING on this tool (and on update_subscription /
 # cancel_subscription). It is INT on get_jobs / create_job. Mixed types are
-# real on this server — confirm via get_schema(...) for any unfamiliar tool.
+# real on this server — call the get_schema meta-tool before execute when unsure.
 # Confirms product_id, status, stage_ids, storage attachment.
 ```
 
@@ -178,7 +187,9 @@ inactive subscription will queue but not run.
 ### Step 2 — get the right stage_ids
 
 ```python
-stages = await get_product_stage_ids(product_id=sub["product_id"])
+stages = await call_tool(
+    "get_product_stage_ids", {"product_id": sub["product_id"]}
+)
 # Returns stage details with stage_id, name, schedule.
 ```
 
@@ -189,11 +200,14 @@ to all stages without confirming.
 ### Step 3 — create the job
 
 ```python
-job = await create_job(
-    subscription_id=128853,
-    date_start="2024-01-01",
-    date_end="2024-01-07",
-    stage_ids=[1004, 1005],
+job = await call_tool(
+    "create_job",
+    {
+        "subscription_id": 128853,
+        "date_start": "2024-01-01",
+        "date_end": "2024-01-07",
+        "stage_ids": [1004, 1005],
+    },
 )
 ```
 
@@ -204,9 +218,14 @@ combination — a 7-day × 2-stage backfill is 14 jobs.
 
 ```python
 # get_jobs takes subscription_id as INT; is_primary is a STRING ("true"/"false").
-jobs = await get_jobs(subscription_id=128853, is_primary="false")
+jobs = await call_tool(
+    "get_jobs", {"subscription_id": 128853, "is_primary": "false"}
+)
 # get_healthchecks takes subscription_id as STR; only filter_date for scoping.
-checks = await get_healthchecks(subscription_id="128853", filter_date="2024-01-08")
+checks = await call_tool(
+    "get_healthchecks",
+    {"subscription_id": "128853", "filter_date": "2024-01-08"},
+)
 ```
 
 Healthchecks surface ingest errors with `status`, `err_msg`, `error_code`.
@@ -237,9 +256,9 @@ night?".
 ```python
 # subscription_id is a STRING on this tool; the only date filter is filter_date.
 # There is NO last_days, NO page — pagination is internal (capped at 10 pages).
-checks = await get_healthchecks(
-    subscription_id="128853",
-    filter_date="2024-01-15",
+checks = await call_tool(
+    "get_healthchecks",
+    {"subscription_id": "128853", "filter_date": "2024-01-15"},
 )
 ```
 
@@ -258,7 +277,10 @@ results = {}
 end = date(2024, 1, 15)
 for i in range(7):
     d = (end - timedelta(days=i)).isoformat()
-    results[d] = await get_healthchecks(subscription_id="128853", filter_date=d)
+    results[d] = await call_tool(
+        "get_healthchecks",
+        {"subscription_id": "128853", "filter_date": d},
+    )
 return results
 ```
 
@@ -272,7 +294,7 @@ hours — that's usually a stuck transaction.
 ### Step 3 — drill into one transaction
 
 ```python
-hist = await get_history_by_id(history_id=424242)
+hist = await call_tool("get_history_by_id", {"history_id": 424242})
 ```
 
 Gives you the full transaction record: `transaction_id`, `file_path`,
@@ -282,7 +304,9 @@ escalating.
 ### Step 4 — clear stuck transactions (with confirmation)
 
 ```python
-result = await update_history_status(history_id=424242, status="cancelled")
+result = await call_tool(
+    "update_history_status", {"history_id": 424242, "status": "cancelled"}
+)
 ```
 
 This is destructive — it removes the transaction from the queue. Always
@@ -312,8 +336,10 @@ use?".
 ### List
 
 ```python
-subs = await get_subscriptions(status="active")  # or "cancelled", "all"
-storages = await get_storage_subscriptions()
+subs = await call_tool(
+    "get_subscriptions", {"status": "active"}  # or "cancelled", "all"
+)
+storages = await call_tool("get_storage_subscriptions", {})
 ```
 
 Pagination is internal and capped at 10 pages — for accounts with >10 pages
@@ -325,7 +351,9 @@ results if individual storages fail.
 
 ```python
 # subscription_id is STRING on this tool (and on update / cancel).
-sub = await get_subscription_by_id(subscription_id="128853")
+sub = await call_tool(
+    "get_subscription_by_id", {"subscription_id": "128853"}
+)
 ```
 
 Returns the JSON:API representation including `stage_ids`, `product_id`,
@@ -334,11 +362,16 @@ Returns the JSON:API representation including `stage_ids`, `product_id`,
 ### Update / cancel
 
 ```python
-updated = await update_subscription(
-    subscription_id="128853",  # STRING
-    attributes={"status": "active", "storage_group_id": 1289},
+updated = await call_tool(
+    "update_subscription",
+    {
+        "subscription_id": "128853",  # STRING
+        "attributes": {"status": "active", "storage_group_id": 1289},
+    },
 )
-cancelled = await cancel_subscription(subscription_id="128853")  # STRING
+cancelled = await call_tool(
+    "cancel_subscription", {"subscription_id": "128853"}  # STRING
+)
 ```
 
 `update_subscription` accepts the JSON:API `attributes` object — only pass
@@ -349,18 +382,21 @@ ingestion — confirm before calling.
 ### Create
 
 ```python
-created = await create_subscription(
-    attributes={
-        "product_id": 50,
-        "remote_identity_id": 4832,
-        "stage_ids": [1004, 1005],
-        # ...full JSON:API attributes per the create schema
+created = await call_tool(
+    "create_subscription",
+    {
+        "attributes": {
+            "product_id": 50,
+            "remote_identity_id": 4832,
+            "stage_ids": [1004, 1005],
+            # ...full JSON:API attributes per the create schema
+        },
     },
 )
 ```
 
-The create payload is product-specific. Read the schema with
-`get_schema("create_subscription")` before assembling — required fields
+The create payload is product-specific. Before `execute`, call the
+`get_schema` meta-tool with `tools=["create_subscription"]` — required fields
 vary by product.
 
 ## Cross-cutting tips

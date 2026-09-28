@@ -1,9 +1,12 @@
 """Tests for subscriptions tool - covering edge cases and pagination."""
 
+from functools import partial
+import json
 from types import SimpleNamespace
 
 import pytest
 import requests as _requests
+from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
 from src.server.tools import subscriptions
@@ -604,3 +607,80 @@ class TestGetStorageSubscriptionsBestEffort:
         result = subscriptions.get_storage_subscriptions()
         assert len(result) == 1, f"scenario: {scenario}"
         assert result[0]["storage_type"] == "unknown", f"scenario: {scenario}"
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+@pytest.mark.parametrize(
+    "case",
+    ["list", "item", "create", "update", "storages", "spm"],
+)
+def test_subscription_auth_failures_raise_without_body_leak(
+    case,
+    status_code,
+    monkeypatch,
+    mock_auth_headers,
+    mock_subscriptions_api,
+    caplog,
+):
+    auth_failure = SimpleNamespace(
+        status_code=status_code,
+        text="sensitive upstream body",
+        json=lambda: {},
+    )
+
+    if case == "list":
+        monkeypatch.setattr(subscriptions.requests, "get", lambda *a, **k: auth_failure)
+        invoke = subscriptions.get_subscriptions
+    elif case == "item":
+        monkeypatch.setattr(subscriptions.requests, "get", lambda *a, **k: auth_failure)
+        invoke = partial(subscriptions.get_subscription_by_id, 123)
+    elif case == "create":
+        monkeypatch.setattr(subscriptions.requests, "post", lambda *a, **k: auth_failure)
+        invoke = partial(subscriptions.create_subscription, {"name": "test"})
+    elif case == "update":
+        monkeypatch.setattr(subscriptions.requests, "patch", lambda *a, **k: auth_failure)
+        invoke = partial(
+            subscriptions.update_subscription,
+            123,
+            {"status": "active"},
+        )
+    elif case == "storages":
+        monkeypatch.setattr(subscriptions.requests, "get", lambda *a, **k: auth_failure)
+        invoke = subscriptions.get_storage_subscriptions
+    else:
+        storages = SimpleNamespace(
+            status_code=200,
+            text="",
+            json=lambda: {
+                "data": [
+                    {
+                        "id": "sub-1",
+                        "attributes": {"storage_group_id": "sg-1"},
+                    }
+                ]
+            },
+        )
+
+        def fake_get(url, *args, **kwargs):
+            return storages if "storages" in url else auth_failure
+
+        monkeypatch.setattr(subscriptions.requests, "get", fake_get)
+        invoke = subscriptions.get_storage_subscriptions
+
+    with pytest.raises(ToolError) as exc_info:
+        invoke()
+
+    envelope = json.loads(str(exc_info.value))
+    expected_tool = {
+        "list": "get_subscriptions",
+        "item": "get_subscription_by_id",
+        "create": "create_subscription",
+        "update": "update_subscription",
+        "storages": "get_storage_subscriptions",
+        "spm": "get_storage_subscriptions",
+    }[case]
+    assert envelope["error_kind"] == "auth_error"
+    assert envelope["error_code"] == "AUTHENTICATION_ERROR"
+    assert envelope["tool"] == expected_tool
+    assert "sensitive upstream body" not in str(exc_info.value)
+    assert "sensitive upstream body" not in caplog.text

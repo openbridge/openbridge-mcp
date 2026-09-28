@@ -10,9 +10,11 @@ The full contract lives at `openbridge-mcp/CONTRACT.md` in the server repo.
 This page is the working subset for skill use.
 
 An unavailable privileged tool is a capability decision, not a retryable tool
-error. Check `get_capabilities()` before calling access-token or mutation tools.
-If disabled, tell the operator that `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`
-is required; do not retry or route around the gate.
+error. In Code Mode, check capabilities with
+`await call_tool("get_capabilities", {})` before calling access-token or
+mutation tools. If disabled, tell the operator that
+`OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true` is required; do not retry or route
+around the gate.
 
 ## Shape
 
@@ -153,13 +155,14 @@ returns a v1 envelope; some return flat error dicts; some raise out of
 
 ### Sandbox cannot reliably catch raise paths
 
-`try/except` around `await tool(...)` *may* catch `pydantic.ValidationError`
+`try/except` around `await call_tool(...)` *may* catch validation exceptions
 or `ValueError`, but the sandbox's exception propagation policy is not
 stable across versions. **The safest pattern is to validate inputs *before*
-the call** — `await get_schema('<tool_name>')` for any tool you haven't
-called this session, and confirm parameter names and types from the schema
-rather than guessing. For known-conditional tools (`validate_query`,
-`execute_query`), check `get_capabilities()` first; never blindly call them.
+the call** — use the `get_schema` meta-tool with `tools=["<tool_name>"]` for
+any tool you haven't called this session, and confirm parameter names and
+types from the schema rather than guessing. For known-conditional tools
+(`validate_query`, `execute_query`), check capabilities first; never blindly
+call them.
 
 ### Distinguishing flat error dicts from v1 envelopes
 
@@ -182,7 +185,15 @@ makes sense; "not found" is permanent.
 ### Rate-limit back-off
 
 ```python
-err = await create_job(...)  # may return an envelope
+err = await call_tool(
+    "create_job",
+    {
+        "subscription_id": 987,
+        "date_start": "2024-01-01",
+        "date_end": "2024-01-07",
+        "stage_ids": [1004],
+    },
+)  # may return an envelope
 if isinstance(err, dict) and err.get("error_kind") == "rate_limited":
     delay = err.get("_meta", {}).get("retry_after_seconds", 1.0)
     # Don't sleep inside execute() — return delay to the caller and let it retry
@@ -192,7 +203,7 @@ if isinstance(err, dict) and err.get("error_kind") == "rate_limited":
 ### Auth refresh
 
 ```python
-err = await get_jobs(subscription_id=987)
+err = await call_tool("get_jobs", {"subscription_id": 987})
 if isinstance(err, dict) and err.get("error_kind") == "auth_error":
     # The MCP can't refresh the token without a valid refresh token — surface to user
     return {"action_required": "refresh_token", "envelope": err}
@@ -201,7 +212,15 @@ if isinstance(err, dict) and err.get("error_kind") == "auth_error":
 ### Validation failures
 
 ```python
-err = await create_job(...)
+err = await call_tool(
+    "create_job",
+    {
+        "subscription_id": 987,
+        "date_start": "2024-01-01",
+        "date_end": "2024-01-07",
+        "stage_ids": [1004],
+    },
+)
 if isinstance(err, dict) and err.get("error_kind") == "mcp_input_validation":
     # Read details[] for the failing paths, correct, retry
     bad_paths = [d["path"] for d in err.get("details", [])]
@@ -218,5 +237,6 @@ A response conforms to v1 when:
 4. `_meta.normalized[]` only uses the four v1 `kind` values
 5. Server capabilities expose `openbridge_envelope.contract_version: 1`
 
-Get the live capabilities with `get_capabilities()` and confirm
+In Code Mode, get the live capabilities with
+`await call_tool("get_capabilities", {})` and confirm
 `openbridge_envelope.contract_version` matches your expectation.

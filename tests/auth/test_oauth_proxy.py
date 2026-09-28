@@ -1,123 +1,22 @@
-"""Tests for OAuthProxy authentication mode.
+"""Tests for native OAuthProxy authentication mode."""
 
-Covers:
-- OAuthBridgeMiddleware: primes JWT from verified OAuth access token
-- OAuthBridgeMiddleware: sets None when no access token present
-- OAuthBridgeMiddleware: skips non-tool requests (no fastmcp_context)
-- OAuthBridgeMiddleware: always calls through to call_next
-- create_oauth_proxy: returns an OAuthProxy instance using env vars
-- create_oauth_proxy: warns when MCP_JWT_SIGNING_KEY is unset
-- AuthConfig.auth_mode: defaults to refresh_token
-- AuthConfig.auth_mode: reads oauth_proxy from OPENBRIDGE_AUTH_MODE
-- AuthConfig.auth_mode: falls back on unrecognized values
-"""
-
+import hashlib
 import logging
+from unittest.mock import AsyncMock
+
+import httpx
 import pytest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProxy
+from fastmcp.server.dependencies import get_access_token
 
 from src.auth.authentication import AuthConfig, create_openbridge_config
-from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy
-from src.auth.session_state import get_request_jwt, set_request_jwt
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_access_token(token: str, scopes: list[str] | None = None) -> MagicMock:
-    """Return a mock AccessToken with .token and .scopes attributes."""
-    at = MagicMock()
-    at.token = token
-    at.scopes = scopes or ["openid", "profile"]
-    return at
-
-
-def _make_context(*, has_fastmcp_context: bool = True) -> SimpleNamespace:
-    ctx = SimpleNamespace()
-    ctx.fastmcp_context = MagicMock() if has_fastmcp_context else None
-    return ctx
-
-
-# ---------------------------------------------------------------------------
-# OAuthBridgeMiddleware
-# ---------------------------------------------------------------------------
-
-
-class TestOAuthBridgeMiddleware:
-    """Tests for OAuthBridgeMiddleware."""
-
-    @pytest.mark.asyncio
-    async def test_primes_jwt_from_access_token(self):
-        """Middleware stores access_token.token in the request ContextVar."""
-        fake_token = _make_access_token("eyJ.test.jwt")
-        context = _make_context()
-        call_next = AsyncMock(return_value="ok")
-
-        with patch("src.auth.oauth_proxy.get_access_token", return_value=fake_token):
-            mw = OAuthBridgeMiddleware()
-            result = await mw.on_request(context, call_next)
-
-        assert result == "ok"
-        assert get_request_jwt() == "eyJ.test.jwt"
-
-    @pytest.mark.asyncio
-    async def test_sets_none_when_no_access_token(self):
-        """Middleware sets ContextVar to None when no access token is present."""
-        set_request_jwt("leftover-from-previous-request")
-        context = _make_context()
-        call_next = AsyncMock(return_value="ok")
-
-        with patch("src.auth.oauth_proxy.get_access_token", return_value=None):
-            mw = OAuthBridgeMiddleware()
-            await mw.on_request(context, call_next)
-
-        assert get_request_jwt() is None
-
-    @pytest.mark.asyncio
-    async def test_always_calls_call_next(self):
-        """Middleware always passes the request on regardless of token presence."""
-        context = _make_context()
-        call_next = AsyncMock(return_value="response")
-
-        with patch("src.auth.oauth_proxy.get_access_token", return_value=None):
-            mw = OAuthBridgeMiddleware()
-            result = await mw.on_request(context, call_next)
-
-        call_next.assert_awaited_once_with(context)
-        assert result == "response"
-
-    @pytest.mark.asyncio
-    async def test_skips_when_no_fastmcp_context(self):
-        """Middleware passes through immediately for non-tool requests."""
-        context = _make_context(has_fastmcp_context=False)
-        call_next = AsyncMock(return_value="passthrough")
-
-        with patch("src.auth.oauth_proxy.get_access_token") as mock_get:
-            mw = OAuthBridgeMiddleware()
-            result = await mw.on_request(context, call_next)
-
-        mock_get.assert_not_called()
-        call_next.assert_awaited_once_with(context)
-        assert result == "passthrough"
-
-    @pytest.mark.asyncio
-    async def test_sets_context_state_when_token_present(self):
-        """JWT is written to both ContextVar and FastMCP context state."""
-        fake_token = _make_access_token("eyJ.ctx.jwt")
-        context = _make_context()
-        call_next = AsyncMock(return_value="ok")
-
-        with patch("src.auth.oauth_proxy.get_access_token", return_value=fake_token):
-            mw = OAuthBridgeMiddleware()
-            await mw.on_request(context, call_next)
-
-        assert get_request_jwt() == "eyJ.ctx.jwt"
-        # FastMCP context set_state should have been called (via _set_context_state)
-        ctx = context.fastmcp_context
-        ctx.set_state.assert_called()
+from src.auth.oauth_proxy import (
+    OpenbridgeOAuthProxy,
+    create_oauth_auth,
+    create_oauth_proxy,
+)
+from src.auth.openbridge_verifier import OpenbridgeCredentialVerifier
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +64,182 @@ class TestCreateOAuthProxy:
 
         result = create_oauth_proxy(base_url="http://localhost:8000")
         assert isinstance(result, OAuthProxy)
+
+    def test_create_oauth_auth_composes_proxy_and_openbridge_verifier(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-key")
+
+        auth = create_oauth_auth(base_url="https://mcp.example.test")
+
+        assert isinstance(auth, MultiAuth)
+        assert isinstance(auth.server, OpenbridgeOAuthProxy)
+        assert len(auth.verifiers) == 1
+        assert isinstance(auth.verifiers[0], OpenbridgeCredentialVerifier)
+
+    def test_multi_auth_preserves_oauth_routes(self, monkeypatch):
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-key")
+        auth = create_oauth_auth(base_url="https://mcp.example.test")
+
+        route_paths = {
+            route.path
+            for route in [*auth.get_routes(), *auth.get_well_known_routes()]
+        }
+
+        assert any("authorize" in path for path in route_paths)
+        assert any("oauth-authorization-server" in path for path in route_paths)
+
+
+@pytest.fixture
+def oauth_proxy(monkeypatch):
+    monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-key")
+    return create_oauth_proxy(
+        base_url="https://mcp.example.test",
+        token_verifier=AsyncMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_oauth_proxy_uses_verified_account_identity(oauth_proxy, monkeypatch):
+    verified = AccessToken(
+        token="upstream.jwt.token",
+        client_id="unknown",
+        scopes=[],
+        expires_at=123456,
+        claims={"account_id": 101, "user_id": 202},
+    )
+    load_access_token = AsyncMock(return_value=verified)
+    monkeypatch.setattr(OAuthProxy, "load_access_token", load_access_token)
+
+    result = await oauth_proxy.load_access_token("fastmcp.reference.token")
+
+    assert result is not None
+    assert result.subject == "account:101|user:202"
+    assert result.token == "upstream.jwt.token"
+    assert result.expires_at == 123456
+
+
+@pytest.mark.asyncio
+async def test_oauth_proxy_falls_back_to_isolated_session(oauth_proxy, monkeypatch):
+    verified = AccessToken(
+        token="upstream.jwt.token",
+        client_id="unknown",
+        scopes=[],
+        expires_at=123456,
+        claims={"active": True},
+    )
+    monkeypatch.setattr(
+        OAuthProxy,
+        "load_access_token",
+        AsyncMock(return_value=verified),
+    )
+
+    first = await oauth_proxy.load_access_token("fastmcp.reference.one")
+    repeated = await oauth_proxy.load_access_token("fastmcp.reference.one")
+    other = await oauth_proxy.load_access_token("fastmcp.reference.two")
+
+    assert first is not None
+    assert repeated is not None
+    assert other is not None
+    assert first.subject == repeated.subject
+    assert first.subject == (
+        "oauth-session:"
+        + hashlib.sha256(b"fastmcp.reference.one").hexdigest()
+    )
+    assert first.subject != other.subject
+    assert first.claims["sub"] == first.subject
+    assert first.client_id == "openbridge-oauth"
+    assert first.token == "upstream.jwt.token"
+    assert first.expires_at == 123456
+
+
+@pytest.mark.asyncio
+async def test_oauth_proxy_preserves_none(oauth_proxy, monkeypatch):
+    monkeypatch.setattr(
+        OAuthProxy,
+        "load_access_token",
+        AsyncMock(return_value=None),
+    )
+
+    assert await oauth_proxy.load_access_token("fastmcp.reference.token") is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_reference_token_is_not_logged(
+    oauth_proxy, monkeypatch, caplog
+):
+    verified = AccessToken(
+        token="upstream.jwt.token",
+        client_id="unknown",
+        scopes=[],
+        claims={"active": True},
+    )
+    monkeypatch.setattr(
+        OAuthProxy,
+        "load_access_token",
+        AsyncMock(return_value=verified),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        await oauth_proxy.load_access_token("fastmcp.reference.sensitive")
+
+    assert "fastmcp.reference.sensitive" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_oauth_reference_token_reaches_tool_with_upstream_jwt(
+    monkeypatch,
+):
+    monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-signing-key-for-tests")
+    proxy = create_oauth_proxy(base_url="http://localhost")
+    auth = MultiAuth(server=proxy, verifiers=[], base_url="http://localhost")
+    server = FastMCP("oauth-boundary-test", auth=auth)
+    observed_tokens = []
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        access_token = get_access_token()
+        observed_tokens.append(access_token.token if access_token else None)
+        return "called"
+
+    app = server.http_app(stateless_http=True)
+    reference_token = proxy.jwt_issuer.issue_access_token(
+        client_id="test-client",
+        scopes=["openid"],
+        jti="test-reference-jti",
+    )
+    monkeypatch.setattr(
+        OAuthProxy,
+        "load_access_token",
+        AsyncMock(
+            return_value=AccessToken(
+                token="verified.upstream.jwt",
+                client_id="upstream-client",
+                scopes=["openid"],
+                claims={"active": True},
+            )
+        ),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://localhost",
+        ) as client:
+            response = await client.post(
+                "/mcp",
+                headers={"Authorization": f"Bearer {reference_token}"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "spy", "arguments": {}},
+                },
+            )
+
+    assert response.status_code == 200
+    assert observed_tokens == ["verified.upstream.jwt"]
 
 
 # ---------------------------------------------------------------------------

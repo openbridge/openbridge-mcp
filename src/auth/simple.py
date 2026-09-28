@@ -16,7 +16,7 @@ import requests
 DEFAULT_CONNECT_TIMEOUT = 10
 DEFAULT_READ_TIMEOUT = 30
 
-# Default upper bound on cached client refresh-token → JWT mappings.
+# Default upper bound on cached client API-credential → JWT mappings.
 # Sized for real multi-tenant deployment: with hourly-expiring JWTs,
 # 256 active tenants per process keeps re-exchange traffic low without
 # unbounded memory growth. Override via OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES.
@@ -62,11 +62,10 @@ def get_api_timeout() -> Tuple[int, int]:
 
 
 def is_refresh_token(token: str) -> bool:
-    """Return True if *token* looks like an Openbridge refresh token.
+    """Return True if *token* looks like an Openbridge API credential.
 
-    Openbridge refresh tokens use the ``xxx:yyy`` format and are not valid
-    JWTs.  A quick heuristic: the token contains a colon, is long enough to
-    be real, and does *not* have the three-dot-separated segments of a JWT.
+    The legacy function name is retained for compatibility. Openbridge API
+    credentials use the ``xxx:yyy`` format and are not JWTs.
     """
     if not token or len(token) < 10:
         return False
@@ -115,7 +114,7 @@ def _parse_cache_cap() -> int:
 
 @runtime_checkable
 class TokenCache(Protocol):
-    """Pluggable interface for caching refresh-token → JWT mappings.
+    """Pluggable interface for caching API-credential → JWT mappings.
 
     The default implementation (:class:`_InMemoryLRUTokenCache`) is
     process-local. A multi-instance production deployment will benefit
@@ -132,7 +131,7 @@ class TokenCache(Protocol):
       can (e.g. Redis ``EXPIREAT``) to avoid unbounded growth.
     * **Be bounded** — either by an entry cap (in-memory LRU) or by
       external eviction policy (Redis ``maxmemory-policy``).
-    * **Never log refresh-token values** — they are credentials. Eviction
+    * **Never log API-credential values**. Eviction
       and miss logging must use only the cap or counters, not keys.
 
     To install a custom backend at runtime, subclass ``OpenbridgeAuth``
@@ -153,7 +152,7 @@ class TokenCache(Protocol):
 
 
 class _InMemoryLRUTokenCache:
-    """Process-local LRU cache of refresh-token → JWT mappings.
+    """Process-local LRU cache of API-credential → JWT mappings.
 
     Reference implementation of :class:`TokenCache`. Replaces the
     previous FIFO-eviction dict. Important properties:
@@ -220,7 +219,7 @@ class _InMemoryLRUTokenCache:
 
 
 class OpenbridgeAuth:
-    """Convert an Openbridge refresh token into a short-lived JWT."""
+    """Convert an Openbridge API credential into a short-lived JWT."""
 
     def __init__(self) -> None:
         self.refresh_token: Optional[str] = os.getenv("OPENBRIDGE_REFRESH_TOKEN")
@@ -230,7 +229,7 @@ class OpenbridgeAuth:
         )
         self._cache: Optional[_CachedToken] = None
         self._cache_lock = threading.RLock()
-        # Per-token cache for client-provided refresh tokens. Typed as
+        # Per-token cache for client-provided API credentials. Typed as
         # the TokenCache Protocol so a subclass / bootstrap shim can
         # replace it with a Redis-backed adapter without changing the
         # call sites in exchange_token.
@@ -250,12 +249,12 @@ class OpenbridgeAuth:
             return self._refresh()
 
     def exchange_token(self, refresh_token: str) -> str:
-        """Exchange an arbitrary refresh token for a JWT.
+        """Exchange an Openbridge API credential for a JWT.
 
-        This is the client-side auth path: the caller provides a refresh
-        token (typically from an ``Authorization: Bearer xxx:yyy`` header)
-        and the server exchanges it for a short-lived JWT via the Openbridge
-        auth API.  Results are cached per refresh-token value so repeated
+        This is the client-side auth path: the caller provides an API credential
+        in an ``Authorization: Bearer xxx:yyy`` header and the server exchanges
+        it for a short-lived JWT via the Openbridge auth API. Results are cached
+        per credential value so repeated
         tool calls within the same session do not re-exchange.
 
         Caching is LRU-bounded (see :class:`_InMemoryLRUTokenCache`); a
@@ -264,10 +263,10 @@ class OpenbridgeAuth:
         """
         cached = self._client_cache.get(refresh_token)
         if cached and cached.is_valid():
-            logger.debug("Using cached JWT for client refresh token")
+            logger.debug("Using cached JWT for client API credential")
             return cached.token
 
-        logger.info("Exchanging client refresh token for JWT")
+        logger.info("Exchanging client API credential for JWT")
         jwt_token = self._do_exchange(refresh_token)
 
         decoded = jwt.decode(jwt_token, options={"verify_signature": False})
@@ -283,7 +282,7 @@ class OpenbridgeAuth:
         return jwt_token
 
     def _refresh(self) -> str:
-        """Exchange the server's refresh token for a JWT."""
+        """Exchange the server's API credential for a JWT."""
         jwt_token = self._do_exchange(self.refresh_token)
 
         decoded = jwt.decode(jwt_token, options={"verify_signature": False})
@@ -295,7 +294,7 @@ class OpenbridgeAuth:
         return jwt_token
 
     def _do_exchange(self, refresh_token: str) -> str:
-        """Exchange a refresh token for a JWT via the Openbridge auth API."""
+        """Exchange an API credential for a JWT via the Openbridge auth API."""
         try:
             response = requests.post(
                 f"{self.auth_base_url}/auth/api/ref",
@@ -316,7 +315,7 @@ class OpenbridgeAuth:
             payload = response.json()
         except Exception as exc:
             raise AuthenticationError(
-                f"Failed to convert refresh token to JWT: {exc}"
+                f"Failed to convert Openbridge API credential to JWT: {exc}"
             ) from exc
 
         try:

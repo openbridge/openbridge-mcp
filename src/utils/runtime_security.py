@@ -35,11 +35,6 @@ def env_flag(name: str, *, default: bool) -> bool:
     return default
 
 
-def require_client_auth_enabled() -> bool:
-    """Return whether every remote request must supply its own credential."""
-    return env_flag("OPENBRIDGE_REQUIRE_CLIENT_AUTH", default=True)
-
-
 def path_tokens_enabled() -> bool:
     """Return True only when legacy URL path tokens are explicitly enabled."""
     return env_flag("MCP_PATH_TOKEN_ENABLED", default=False)
@@ -82,10 +77,16 @@ def is_loopback_host(host: str) -> bool:
 def validate_runtime_security(host: str) -> None:
     """Reject remotely reachable authentication bypasses unless overridden."""
     positive_int_env("OPENBRIDGE_AUTH_EXCHANGE_CONCURRENCY", default=8)
+    auth_enabled = env_flag("AUTH_ENABLED", default=True)
     auth_mode = os.getenv("OPENBRIDGE_AUTH_MODE", "refresh_token").strip().lower()
     if auth_mode == "oauth_proxy" and not is_loopback_host(host):
         validate_secret("MCP_JWT_SIGNING_KEY", os.getenv("MCP_JWT_SIGNING_KEY", ""))
     if path_tokens_enabled():
+        if not auth_enabled:
+            raise RuntimeError(
+                "MCP path tokens require AUTH_ENABLED=true so injected "
+                "credentials reach the native verifier"
+            )
         if auth_mode != "refresh_token":
             raise RuntimeError(
                 "MCP path tokens are supported only in OPENBRIDGE_AUTH_MODE=refresh_token"
@@ -101,16 +102,11 @@ def validate_runtime_security(host: str) -> None:
             if not 1 <= days <= 7:
                 raise RuntimeError(f"{name} must be an integer from 1 through 7")
 
-    auth_enabled = env_flag("AUTH_ENABLED", default=True)
-    client_auth = require_client_auth_enabled()
-    server_token = bool(os.getenv("OPENBRIDGE_REFRESH_TOKEN", "").strip())
     unsafe_override = env_flag(
         "OPENBRIDGE_ALLOW_INSECURE_REMOTE_AUTH",
         default=False,
     )
-    unsafe_remote = not is_loopback_host(host) and (
-        not auth_enabled or (server_token and not client_auth)
-    )
+    unsafe_remote = not is_loopback_host(host) and not auth_enabled
     if not unsafe_remote:
         return
     if not unsafe_override:

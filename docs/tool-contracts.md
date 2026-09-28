@@ -178,17 +178,22 @@ Chains storages list + per-storage `/spm` calls.
 
 ### `get_auth_headers(ctx=None) -> Dict[str, str]`
 
-Resolves auth header in priority order: ContextVar → ctx.get_state → ctx attrs → env refresh token.
+Uses FastMCP's native access-token dependency for authenticated requests.
 
 | Trigger | Behavior |
 |---|---|
-| ContextVar `_jwt_var` set to non-empty string | Return `{"Authorization": "Bearer <jwt>"}`. |
-| `ctx.get_state` returns awaitable (async FastMCP) | Discard, fall through to attrs. |
-| `ctx.get_state` returns non-str | Discard, fall through. |
-| `ctx` attributes have JWT | Return Bearer header. |
-| No context JWT, no env refresh token | Return `{}`. |
-| Env refresh token exchange raises `AuthenticationError(not available)` | Return `{}`, debug-log. |
-| Env refresh token exchange raises other `AuthenticationError` | Re-raise with actionable message (auth URL, possible causes). |
+| Native access token contains a string token | Return `{"Authorization": "Bearer <token>"}`. |
+| No native token and `AUTH_ENABLED=true` | Raise `AuthenticationError`; never use the server principal. |
+| No native token and `AUTH_ENABLED=false` | Attempt the local `OPENBRIDGE_REFRESH_TOKEN` fallback. |
+| Auth-disabled fallback credential absent | Return `{}`, debug-log. |
+| Auth-disabled exchange raises another `AuthenticationError` | Re-raise with an actionable message. |
+
+### `raise_for_auth_status(response, tool=..., operation=...) -> None`
+
+| Trigger | Behavior |
+|---|---|
+| Upstream status `401` or `403` | Raise `ToolError` containing a body-safe v1 `auth_error` envelope. |
+| Any other status | Return `None`. |
 
 ### `safe_pagination_url(next_url, base_url) -> Optional[str]`
 
@@ -202,12 +207,6 @@ SSRF guard for pagination links.
 | Resolved host ≠ `base_url` host | Return `None`, warn-log. |
 | `urljoin` produces malformed URL | Caught by `validate_url` → return `None`. |
 
-### `_get_context_jwt(ctx) -> Optional[str]`
-
-Internal helper; contract documented for test clarity. Never raises.
-
----
-
 ## `src/auth/simple.py`
 
 ### `get_api_timeout() -> Tuple[int, int]`
@@ -220,7 +219,8 @@ Internal helper; contract documented for test clarity. Never raises.
 
 ### `is_refresh_token(token) -> bool`
 
-Heuristic; must never raise. `None` / empty / short / non-string-safe inputs all return `False`.
+Legacy-named classifier for an `xxx:yyy` Openbridge API credential. Must never
+raise. `None`, empty, short, and non-string inputs return `False`.
 
 ### `OpenbridgeAuth.get_jwt() -> str`
 
@@ -231,12 +231,12 @@ Heuristic; must never raise. `None` / empty / short / non-string-safe inputs all
 | Cached token expired (with 5-min buffer) | Refresh and return. |
 | `_do_exchange` raises | Propagate. |
 
-### `OpenbridgeAuth.exchange_token(refresh_token) -> str`
+### `OpenbridgeAuth.exchange_token(api_credential) -> str`
 
 | Trigger | Behavior |
 |---|---|
-| Cached (by raw refresh token value) valid | Return cached. |
-| Cache size > 32 after insert | Evict oldest (FIFO dict order). |
+| Cached API credential result valid | Return cached JWT. |
+| Cache exceeds `OPENBRIDGE_TOKEN_CACHE_MAX_ENTRIES` (default 256) | Evict least-recently-used entry. |
 | `_do_exchange` raises | Propagate `AuthenticationError`. |
 
 ### `OpenbridgeAuth._do_exchange(refresh_token) -> str`
@@ -244,67 +244,46 @@ Heuristic; must never raise. `None` / empty / short / non-string-safe inputs all
 | Trigger | Behavior |
 |---|---|
 | `requests.post` raises | Raise `AuthenticationError("Openbridge auth request failed")`. |
-| Non-200 response | Raise `AuthenticationError("Failed to convert refresh token to JWT: ...")` (via `raise_for_status`). |
-| 200 non-JSON | Raise `AuthenticationError("Failed to convert refresh token to JWT: ...")`. |
+| Non-200 response | Raise `AuthenticationError("Failed to convert Openbridge API credential to JWT: ...")` (via `raise_for_status`). |
+| 200 non-JSON | Raise `AuthenticationError("Failed to convert Openbridge API credential to JWT: ...")`. |
 | 200 JSON missing `data.attributes.token` | Raise `AuthenticationError("Openbridge auth response did not include a token")`. |
 
 ---
 
 ## `src/auth/authentication.py`
 
-### `OpenbridgeAuthMiddleware.on_request(context, call_next)`
-
-Middleware priority: client Authorization header → server env refresh token → no auth.
-
-| Trigger | Behavior |
-|---|---|
-| `context.fastmcp_context is None` | Skip all auth work, still invoke `call_next`. |
-| Authorization header missing or not `Bearer ` | Fall through to server token path. |
-| Authorization `Bearer ` with empty/whitespace token | Fall through to server token path. |
-| Client refresh token (`xxx:yyy` shape) | Exchange via `_auth.exchange_token`, use resulting JWT. |
-| Client JWT (3-segment) | Use as-is. |
-| Client token resolution raises | Warn-log, fall through to server token path. |
-| Server refresh token present | Mint JWT via `_auth.get_jwt`. |
-| Neither available | `set_request_jwt(None)`, continue. |
-| JWT resolved | `set_request_jwt(jwt)` **AND** both FastMCP context state keys written. |
-| `_set_context_state` awaitable | Awaited; attr fallback also set. |
-
-### `_set_context_state(ctx, key, value)`
-
-| Trigger | Behavior |
-|---|---|
-| `ctx` is None | Return silently. |
-| `ctx.set_state` is callable and returns awaitable | Await. |
-| `ctx.set_state` raises | Debug-log, fall through. |
-| Always | `setattr(ctx, key, value)` after set_state attempt. |
-
 ### `create_openbridge_config() -> AuthConfig`
 
 | Trigger | Behavior |
 |---|---|
-| `AUTH_ENABLED=false` (case-insensitive) | All sub-flags False. |
-| Unset or any other value | All sub-flags True (default enabled). |
-
-### `create_auth_middleware(config, jwt_middleware=False, auth_manager=None) -> List[Middleware]`
-
-| Trigger | Behavior |
-|---|---|
-| `config.enabled=False` | Return `[]` (no middleware). |
-| Enabled, no `auth_manager` provided | Use `get_auth()` singleton. |
-| Enabled with provided manager | Use it. |
+| `AUTH_ENABLED=false` (case-insensitive) | Return disabled configuration. |
+| `OPENBRIDGE_AUTH_MODE=oauth_proxy` | Select OAuth plus direct credentials. |
+| Mode unset or invalid | Select `refresh_token` compatibility mode. |
+| `OPENBRIDGE_REQUIRE_CLIENT_AUTH` present | Ignore it; runtime emits a deprecation warning. |
 
 ---
 
-## `src/auth/session_state.py`
+## `src/auth/openbridge_verifier.py`
 
-### `set_request_jwt(token)` / `get_request_jwt()`
+### `OpenbridgeCredentialVerifier.verify_token(token) -> AccessToken | None`
 
 | Trigger | Behavior |
 |---|---|
-| Default (never set) | `get_request_jwt()` returns `None`. |
-| Concurrent tasks | Each task sees only its own set value (ContextVar semantics). **Must not leak across tasks.** |
-| Nested calls within same task | Inner `set` visible after nested call returns (standard ContextVar, no token reset). |
-| Never | Raises. |
+| `xxx:yyy` API credential | Exchange through the bounded, de-duplicated coordinator, then introspect the JWT. |
+| Direct Openbridge JWT | Introspect without exchange. |
+| Exchange/introspection fails or token inactive | Return `None`; FastMCP rejects at the boundary. |
+| Verified token lacks non-empty `account_id` or `user_id` | Return `None` before task identity creation. |
+| Verified identity present | Return a copy scoped to `account:<id>|user:<id>`. |
+
+## `src/auth/oauth_proxy.py`
+
+### `OpenbridgeOAuthProxy.load_access_token(token) -> AccessToken | None`
+
+| Trigger | Behavior |
+|---|---|
+| Upstream validation fails | Return `None`. |
+| Verified account/user identity present | Use the normalized direct identity. |
+| Verified OAuth token has no account/user mapping | Assign an isolated `oauth-session:<digest>` task subject. |
 
 ---
 

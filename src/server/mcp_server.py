@@ -25,11 +25,10 @@ from src.utils.logging import get_logger  # noqa: E402
 from src.utils.runtime_security import (  # noqa: E402
     env_flag,
     is_loopback_host,
-    require_client_auth_enabled,
 )
-from src.auth.authentication import create_auth_middleware, create_openbridge_config  # noqa: E402
-from src.auth.manager import get_auth_manager  # noqa: E402
-from src.auth.oauth_proxy import OAuthBridgeMiddleware, create_oauth_proxy  # noqa: E402
+from src.auth.authentication import create_openbridge_config  # noqa: E402
+from src.auth.oauth_proxy import create_oauth_auth  # noqa: E402
+from src.auth.openbridge_verifier import create_openbridge_credential_verifier  # noqa: E402
 from src.server.code_mode import create_code_mode_transform, is_code_mode_enabled  # noqa: E402
 from src.server.error_envelope_middleware import ErrorEnvelopeMiddleware  # noqa: E402
 
@@ -88,10 +87,15 @@ def _warn_if_server_token_fallback_open() -> None:
     Remote fallback requires a separately named dangerous override and is
     surfaced with a high-signal warning.
     """
-    server_token_set = bool(os.getenv("OPENBRIDGE_REFRESH_TOKEN"))
-    if not server_token_set:
+    if os.getenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH") is not None:
+        logger.warning(
+            "OPENBRIDGE_REQUIRE_CLIENT_AUTH is deprecated and ignored; "
+            "AUTH_ENABLED=true always requires a valid client credential."
+        )
+
+    if env_flag("AUTH_ENABLED", default=True):
         return
-    if require_client_auth_enabled():
+    if not os.getenv("OPENBRIDGE_REFRESH_TOKEN"):
         return
     host = os.getenv("MCP_HOST", "0.0.0.0")
     if not is_loopback_host(host) and env_flag(
@@ -106,10 +110,9 @@ def _warn_if_server_token_fallback_open() -> None:
         )
         return
     logger.warning(
-        "OPENBRIDGE_REFRESH_TOKEN fallback is enabled because "
-        "OPENBRIDGE_REQUIRE_CLIENT_AUTH=false. Keep MCP_HOST on loopback for "
-        "local single-tenant use; remote startup otherwise fails closed, and "
-        "multi-tenant deployments must require client authentication."
+        "OPENBRIDGE_REFRESH_TOKEN fallback is enabled while authentication is "
+        "disabled. Keep MCP_HOST on loopback for local single-tenant use; "
+        "remote startup otherwise fails closed."
     )
 
 def _is_async_callable(func: Callable[..., Any]) -> bool:
@@ -149,32 +152,28 @@ def create_mcp_server() -> FastMCP:
         instructions="Openbridge MCP server for utilizing a variety of API endpoints and tools.",
     )
 
-    if auth_cfg.auth_mode == "oauth_proxy":
-        # FastMCP's OAuthProxy handles the full OAuth flow and token
-        # introspection. The bridge middleware then copies the verified
-        # access token into the ContextVar so all existing tools work
-        # without modification.
-        logger.info("Configuring MCP in oauth_proxy mode with FastMCP OAuthProxy and introspection")
+    if not auth_cfg.enabled:
+        mcp = FastMCP(**_MCP_KWARGS)
+        mcp.add_middleware(ErrorEnvelopeMiddleware())
+        logger.info("Auth mode: disabled")
+    elif auth_cfg.auth_mode == "oauth_proxy":
+        logger.info("Configuring MCP in oauth_proxy mode with FastMCP MultiAuth")
         mcp_port = int(os.getenv("MCP_PORT", 8000))
         mcp_host = os.getenv("MCP_HOST", "localhost")
         base_url = os.getenv("MCP_BASE_URL", f"http://{mcp_host}:{mcp_port}")
         logger.info("OAuth Proxy base URL set to: %s", base_url)
-        oauth = create_oauth_proxy(base_url=base_url)
-        logger.info("OAuth Proxy created successfully, initializing FastMCP with OAuthProxy auth")
-        mcp = FastMCP(**_MCP_KWARGS, auth=oauth)
+        auth = create_oauth_auth(base_url=base_url)
+        mcp = FastMCP(**_MCP_KWARGS, auth=auth)
         mcp.add_middleware(ErrorEnvelopeMiddleware())
-        mcp.add_middleware(OAuthBridgeMiddleware())
-        logger.info("Auth mode: oauth_proxy (FastMCP OAuthProxy + introspection, base_url=%s)", base_url)
+        logger.info(
+            "Auth mode: oauth_proxy (FastMCP MultiAuth, base_url=%s)",
+            base_url,
+        )
     else:
-        # Default: refresh_token mode — existing OpenbridgeAuthMiddleware
-        # exchanges Bearer refresh tokens for JWTs.
-        auth_manager = get_auth_manager()
-        middleware = create_auth_middleware(auth_cfg, jwt_middleware=False, auth_manager=auth_manager)
-        mcp = FastMCP(**_MCP_KWARGS)
+        verifier = create_openbridge_credential_verifier()
+        mcp = FastMCP(**_MCP_KWARGS, auth=verifier)
         mcp.add_middleware(ErrorEnvelopeMiddleware())
-        for mw in middleware:
-            mcp.add_middleware(mw)
-        logger.info("Auth mode: refresh_token (Bearer/exchange middleware)")
+        logger.info("Auth mode: refresh_token (FastMCP credential verifier)")
 
     # FastMCP 4 moved background tasks into an explicit extension.
     mcp.add_extension(TasksExtension())

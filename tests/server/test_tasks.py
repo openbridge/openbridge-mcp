@@ -27,20 +27,20 @@ assertions from the rest of the server-construction surface.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import inspect
 from pathlib import Path
 
 import pytest
-import jwt as pyjwt
 from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import McpError
+from fastmcp.server.auth import AccessToken
 from fastmcp.utilities.tasks import TaskConfig
 from fastmcp_tasks import TasksExtension
 from fastmcp_tasks.client import call_tool_task
 from fastmcp_tasks.context import get_task_context
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
-from src.auth.authentication import OpenbridgeAuthMiddleware
 from src.server import mcp_server
 from src.server.tools.base import get_auth_headers
 from src.server.tools.tool_manifest import PRIVILEGED_TOOL_NAMES, TOOL_MANIFEST
@@ -77,12 +77,6 @@ def _build_server(monkeypatch, *, api_key: bool = True) -> FakeFastMCP:
     monkeypatch.setenv("OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS", "true")
 
     monkeypatch.setattr(mcp_server, "create_openbridge_config", lambda: FakeAuthConfig())
-    monkeypatch.setattr(mcp_server, "get_auth_manager", lambda: "auth-manager")
-    monkeypatch.setattr(
-        mcp_server,
-        "create_auth_middleware",
-        lambda config, *, jwt_middleware, auth_manager: [],
-    )
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
     return mcp_server.create_mcp_server()
 
@@ -102,16 +96,18 @@ def test_server_constructed_with_tasks_extension(monkeypatch):
 @pytest.mark.asyncio
 async def test_background_task_restores_openbridge_auth_and_tenant_scope(monkeypatch):
     """A real task worker must receive the submitting tenant's resolved JWT."""
-    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "true")
-    jwt_token = pyjwt.encode({"sub": "tenant-a"}, "a" * 32, algorithm="HS256")
-
-    class StaticAuth:
-        def get_jwt(self):
-            return jwt_token
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    jwt_token = "header.tenant-a.signature"
+    access_token = AccessToken(
+        token=jwt_token,
+        client_id="openbridge",
+        scopes=[],
+        subject="account:101|user:202",
+        claims={"sub": "account:101|user:202"},
+    )
 
     server = FastMCP("task-auth-test")
     server.add_extension(TasksExtension(url="memory://"))
-    server.add_middleware(OpenbridgeAuthMiddleware(StaticAuth()))
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def observe_auth(ctx: Context) -> dict[str, str | None]:
@@ -121,45 +117,81 @@ async def test_background_task_restores_openbridge_auth_and_tenant_scope(monkeyp
             "scope": task.task_scope if task else None,
         }
 
-    async with Client(server) as client:
-        result = await client.call_tool("observe_auth", raise_on_error=False)
+    context_token = auth_context_var.set(AuthenticatedUser(access_token))
+    try:
+        async with Client(server) as client:
+            result = await client.call_tool("observe_auth", raise_on_error=False)
+    finally:
+        auth_context_var.reset(context_token)
 
-    expected_scope = (
-        "openbridge-mcp|credential:"
-        f"{hashlib.sha256(jwt_token.encode()).hexdigest()}"
-    )
     assert result.is_error is False, result.content
     assert result.data == {
         "authorization": f"Bearer {jwt_token}",
-        "scope": expected_scope,
+        "scope": "openbridge|account:101|user:202",
     }
 
 
 @pytest.mark.asyncio
-async def test_background_tasks_are_isolated_by_tenant_scope(monkeypatch):
-    """A second tenant must not read a task submitted by the first tenant."""
-    monkeypatch.setenv("OPENBRIDGE_REQUIRE_CLIENT_AUTH", "true")
-    tenant_a = pyjwt.encode({"sub": "tenant-a"}, "a" * 32, algorithm="HS256")
-    tenant_b = pyjwt.encode({"sub": "tenant-b"}, "b" * 32, algorithm="HS256")
-    current_token = {"value": tenant_a}
-
-    class DynamicAuth:
-        def get_jwt(self):
-            return current_token["value"]
+@pytest.mark.parametrize(
+    ("client_id", "subject_a", "subject_b"),
+    [
+        (
+            "openbridge",
+            "account:101|user:201",
+            "account:102|user:202",
+        ),
+        (
+            "openbridge-oauth",
+            "oauth-session:session-a",
+            "oauth-session:session-b",
+        ),
+    ],
+)
+async def test_background_tasks_are_isolated_by_tenant_scope(
+    monkeypatch,
+    client_id,
+    subject_a,
+    subject_b,
+):
+    """Direct tenants and OAuth sessions cannot read each other's tasks."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    tenant_a = AccessToken(
+        token="header.tenant-a.signature",
+        client_id=client_id,
+        scopes=[],
+        subject=subject_a,
+        claims={"sub": subject_a},
+    )
+    tenant_b = AccessToken(
+        token="header.tenant-b.signature",
+        client_id=client_id,
+        scopes=[],
+        subject=subject_b,
+        claims={"sub": subject_b},
+    )
 
     server = FastMCP("task-isolation-test")
     server.add_extension(TasksExtension(url="memory://"))
-    server.add_middleware(OpenbridgeAuthMiddleware(DynamicAuth()))
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def tenant_task() -> str:
         return "complete"
 
-    async with Client(server) as client:
-        task = await call_tool_task(client, "tenant_task")
-        current_token["value"] = tenant_b
-        with pytest.raises(McpError, match="not found"):
-            await task.status()
+    context_token = auth_context_var.set(AuthenticatedUser(tenant_a))
+    try:
+        async with Client(server) as client:
+            task = await call_tool_task(client, "tenant_task")
+            owner_status = await task.status()
+            owner_result = await task.result()
+
+            assert owner_status.task_id == task.task_id
+            assert owner_result.data == "complete"
+
+            auth_context_var.set(AuthenticatedUser(tenant_b))
+            with pytest.raises(McpError, match="not found"):
+                await task.status()
+    finally:
+        auth_context_var.reset(context_token)
 
 
 def test_production_compose_requires_task_snapshot_encryption():

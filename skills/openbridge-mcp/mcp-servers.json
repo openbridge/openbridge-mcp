@@ -9,7 +9,6 @@
         "tags",
         "search",
         "get_schema",
-        "get_schemas",
         "execute",
         "get_capabilities",
         "get_jobs",

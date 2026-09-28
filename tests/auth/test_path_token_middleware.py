@@ -3,11 +3,16 @@ import base64
 import datetime
 import json
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import jwt as pyjwt
 import pytest
+from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken
+from fastmcp.server.dependencies import get_access_token
 
+from src.auth.openbridge_verifier import OpenbridgeCredentialVerifier
 from src.auth.path_token_middleware import (
     AUDIENCE,
     ISSUER,
@@ -334,3 +339,52 @@ def test_generate_token_round_trip():
     mw = _make_middleware()
     token = mw.generate_token("myaccount:mypass", ttl_days=7)
     assert _verify_path_token(token, SECRET) == "myaccount:mypass"
+
+
+@pytest.mark.asyncio
+async def test_path_token_reaches_native_verifier_and_tool_context():
+    auth = MagicMock()
+    auth.exchange_token.return_value = "verified.jwt.token"
+    introspection = AsyncMock()
+    introspection.verify_token.return_value = AccessToken(
+        token="verified.jwt.token",
+        client_id="unknown",
+        scopes=[],
+        claims={"active": True, "account_id": 101, "user_id": 202},
+    )
+    verifier = OpenbridgeCredentialVerifier(
+        auth=auth,
+        introspection=introspection,
+    )
+    server = FastMCP("path-token-native-auth", auth=verifier)
+    observed = []
+
+    @server.tool(name="spy")
+    async def spy() -> str:
+        token = get_access_token()
+        observed.append(token.token if token else None)
+        return "called"
+
+    base_app = server.http_app(stateless_http=True)
+    app = PathTokenMiddleware(base_app, secret=SECRET)
+    path_token = _sign_path_token(REFRESH_TOKEN, SECRET, ttl_days=1)
+    transport = httpx.ASGITransport(app=app)
+
+    async with base_app.router.lifespan_context(base_app):
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                f"/mcp/{path_token}",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "spy", "arguments": {}},
+                },
+            )
+
+    assert response.status_code == 200
+    assert observed == ["verified.jwt.token"]
+    auth.exchange_token.assert_called_once_with(REFRESH_TOKEN)

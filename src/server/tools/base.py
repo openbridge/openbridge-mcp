@@ -1,85 +1,48 @@
 from __future__ import annotations
 
-from inspect import isawaitable
-from typing import Dict, Optional
+import json
+from typing import Any, Dict, Optional
 from urllib.parse import urljoin, urlparse
 
+from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 
-from src.auth.authentication import JWT_CONTEXT_ATTR, JWT_PUBLIC_ATTR
-from src.auth.session_state import get_request_jwt
 from src.auth.simple import AuthenticationError, get_api_timeout, get_auth
+from src.utils.envelope import auth_error
 from src.utils.logging import get_logger
-from src.utils.runtime_security import require_client_auth_enabled
+from src.utils.runtime_security import env_flag
 from src.utils.security import ValidationError, validate_url
 
 logger = get_logger("base_tools")
 
 
-def _get_context_jwt(ctx) -> Optional[str]:
-    """Best-effort retrieval of a primed JWT from the FastMCP context.
-
-    Priority:
-    1. ContextVar set by the auth middleware (survives across fresh
-       Context instances, e.g. those handed to tools invoked from the
-       Code Mode sandbox).
-    2. ``ctx.get_state`` (older FastMCP sync variant; async results
-       are discarded to avoid coroutine leakage).
-    3. Attribute fallback written by the middleware.
-    """
-    cv_token = get_request_jwt()
-    if cv_token and isinstance(cv_token, str):
-        return cv_token
-
-    # FastMCP 4 restores this standard token inside background task workers.
-    # Refresh-token middleware bridges into it at task submission time, while
-    # OAuthProxy populates it directly after token verification.
-    access_token = get_access_token()
-    if access_token and isinstance(access_token.token, str):
-        return access_token.token
-
-    if not ctx:
-        return None
-
-    get_state = getattr(ctx, "get_state", None)
-    if callable(get_state):
-        try:
-            candidate = get_state(JWT_PUBLIC_ATTR)
-            if candidate and not isawaitable(candidate):
-                return candidate
-        except Exception:  # pragma: no cover - defensive
-            logger.debug("Context get_state accessor is unavailable")
-
-    jwt_token = getattr(ctx, JWT_CONTEXT_ATTR, None) or getattr(ctx, JWT_PUBLIC_ATTR, None)
-    if jwt_token and isinstance(jwt_token, str):
-        return jwt_token
-
-    return None
+def raise_for_auth_status(
+    response: Any,
+    *,
+    tool: str,
+    operation: str,
+) -> None:
+    """Raise a body-safe auth envelope for upstream authorization failures."""
+    if response.status_code in {401, 403}:
+        envelope = auth_error(
+            tool=tool,
+            summary=f"Openbridge authorization failed during {operation}",
+            hints=["Reconnect with a valid credential, then retry."],
+        )
+        raise ToolError(json.dumps(envelope))
 
 
 def get_auth_headers(ctx=None) -> Dict[str, str]:
     """Return Authorization headers for Openbridge API calls."""
-    jwt_token = _get_context_jwt(ctx)
-    if jwt_token:
-        logger.debug(
-            "Using JWT token from context (len=%d, segments=%d, prefix=%s…)",
-            len(jwt_token),
-            jwt_token.count(".") + 1,
-            jwt_token[:12],
-        )
-        return {"Authorization": f"Bearer {jwt_token}"}
+    del ctx  # Kept for compatibility with existing tool call signatures.
+    access_token = get_access_token()
+    if access_token and isinstance(access_token.token, str):
+        return {"Authorization": f"Bearer {access_token.token}"}
 
-    # Multi-tenant fail-closed backstop: if the deployment requires
-    # per-tenant auth, never silently fall back to the server token or
-    # an empty header. The middleware is the primary gate, but tools
-    # invoked without a request-scoped context (e.g. internal callers,
-    # background jobs) must also refuse to leak the server principal.
-    if require_client_auth_enabled():
+    if env_flag("AUTH_ENABLED", default=True):
         raise AuthenticationError(
-            "OPENBRIDGE_REQUIRE_CLIENT_AUTH is enabled but no per-tenant "
-            "JWT was resolved for this call. Refusing to fall back to the "
-            "server refresh token. Ensure the request carries an "
-            "Authorization: Bearer header."
+            "No authenticated access token is available for this call. "
+            "Reconnect with a valid Authorization: Bearer credential."
         )
 
     try:
@@ -135,4 +98,10 @@ def safe_pagination_url(next_url: Optional[str], base_url: str) -> Optional[str]
     return candidate
 
 
-__all__ = ["get_auth_headers", "get_api_timeout", "safe_pagination_url", "AuthenticationError"]
+__all__ = [
+    "AuthenticationError",
+    "get_api_timeout",
+    "get_auth_headers",
+    "raise_for_auth_status",
+    "safe_pagination_url",
+]
