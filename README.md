@@ -380,7 +380,7 @@ Available URIs:
 The provider uses `supporting_files="resources"` so reference docs and eval JSON are individually addressable. Reload is off; skills snapshot at image build time. See [AGENTS.md §Skills](AGENTS.md#skills) for the full directory contract and how to add new skills.
 
 ### Tools exposed
-By default (`CODE_MODE=true`), Code Mode is active and clients typically see meta-tools like `search`, `get_schema`/`get_schemas`, and `execute` (plus `tags` when enabled).  
+By default (`CODE_MODE=true`), Code Mode is active and clients see `search`, `get_schema`, and `execute` (plus `tags` when enabled). Inside `execute`, invoke catalog tools through `await call_tool("tool_name", {"argument": value})`.
 Set `CODE_MODE=false` to opt out and expose the direct tool catalog documented below.
 
 The default catalog is read-oriented. Credential-returning and mutating tools are absent unless `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`. Call `get_capabilities` before planning a privileged workflow. Existing deployments that rely on these six tools must set the flag before deploying this release and confirm their presence in a smoke test.

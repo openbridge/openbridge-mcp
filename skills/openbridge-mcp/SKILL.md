@@ -14,7 +14,7 @@ description: >
   Mode meta-tools (`tags`, `search`, `get_schema`, `execute`) to the direct
   tool catalog. If a conversation touches Openbridge pipelines or warehouse
   tables, prefer this skill — wrong tool names or stage_ids waste API quota.
-version: "0.1.3"
+version: "0.1.4"
 mcp_servers: mcp-servers.json
 compatibility:
   - openbridge-mcp >= 1.0 (Code Mode tools tags/search/get_schema/execute, FastMCP HTTP transport)
@@ -37,10 +37,10 @@ historical/backfill data pulls.
 You drive all of that either through:
 
 1. **Openbridge MCP** — the FastMCP server in `openbridge-mcp/`. Default mode
-   is Code Mode: clients see only `tags`, `search`, `get_schema`/`get_schemas`,
-   `execute` and run Python in a sandbox that calls individual tools. This is
-   the recommended path. Read **`references/code-mode.md`** before writing any
-   `execute()` block.
+   is Code Mode: clients see only `tags`, `search`, `get_schema`, and `execute`,
+   then run Python in a sandbox that invokes catalog tools through
+   `call_tool(name, arguments)`. This is the recommended path. Read
+   **`references/code-mode.md`** before writing any `execute()` block.
 2. **embed-cli** — shell/Docker CLI (`./bin/embed-cli` or
    `openbridge/embed-cli` Docker image). Same APIs, no sandbox. Use when the
    MCP server isn't attached or for batch CSV jobs.
@@ -86,7 +86,8 @@ Tool availability on the openbridge MCP is **not** uniform across deployments.
 Before any workflow that depends on a specific tool, confirm it's actually
 registered. Two facts that have caused failures in production:
 
-- **Always call `get_capabilities()` once per session.** It returns which
+- **Always call `get_capabilities` once per session.** In Code Mode, invoke it
+  inside `execute` as `await call_tool("get_capabilities", {})`. It returns which
   tools are enabled, the env vars they require, and any `disabled_reason`.
   Use it instead of guessing from a tool name list.
 - **Privileged tools are default-off.** `get_amazon_api_access_token`,
@@ -176,9 +177,9 @@ attributes)` or `cancel_subscription("…")` for changes (also string IDs).
 > `subscription_id` as `str` (the by-id / update / cancel family), others as
 > `int` (`get_jobs`, `create_job`). Some take `remote_identity_id` as `str`
 > (the remote_identity tools), others as `int` (the Amazon service tools).
-> Don't assume uniformity — when in doubt, `await get_schema('<tool_name>')`
-> first. The skill mirrors the server's mixed types because they are real;
-> the server team is tracking unification.
+> Don't assume uniformity — when in doubt, call the `get_schema` meta-tool with
+> `tools=["<tool_name>"]` before `execute`. The skill mirrors the server's mixed
+> types because they are real; the server team is tracking unification.
 
 ## Code Mode is the default surface
 
@@ -189,20 +190,21 @@ tools the client sees are:
   on this server; family-grouping not yet populated)
 - `search(query)` — find tools by intent — **this is your real discovery
   tool**
-- `get_schema(tool_name)` / `get_schemas([…])` — get the input/output JSON
-  schemas
-- `execute(code)` — run Python in a sandbox that can `await` the individual
-  Openbridge tools
+- `get_schema(tools=[…])` — get parameter details for one or more tools
+- `execute(code)` — run Python in a sandbox with
+  `await call_tool("tool_name", {"argument": value})`
 
-If the user's client shows only those four (plus optionally `tags`), they're
+If the user's client shows only these meta-tools (`tags` is optional), they're
 in Code Mode and you must build calls inside `execute()`. Do **not** try to
 call e.g. `get_jobs()` directly — it isn't exposed. The pattern is:
 
 ```python
-# Inside execute()
-schema = await get_schema("get_jobs")  # only if you need to confirm shape
-# Note: is_primary is a STRING ('true'/'false'), not a Python bool
-jobs = await get_jobs(subscription_id=987, status="active", is_primary="true")
+# Before execute(), call get_schema(tools=["get_jobs"]) if needed.
+# Inside execute(), is_primary is a STRING, not a Python bool.
+jobs = await call_tool(
+    "get_jobs",
+    {"subscription_id": 987, "status": "active", "is_primary": "true"},
+)
 return jobs
 ```
 

@@ -103,7 +103,7 @@ includes a two-account isolation test using distinct verified claim sets.
 The introspection adapter enables a 30-second, 256-entry cache. This bounds the
 extra network cost for stateless direct-credential requests while limiting the
 revocation window; downstream `401` and `403` handling remains the second
-fail-closed check. FastMCP 4.0.5 includes response text in introspection DEBUG
+fail-closed check. FastMCP 4.0.10 includes response text in introspection DEBUG
 logs, so the application pins that specific library logger to INFO or above.
 
 `OPENBRIDGE_AUTH_MODE=refresh_token` remains as a compatibility mode. When

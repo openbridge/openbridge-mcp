@@ -1,11 +1,11 @@
 {
   "skill_name": "openbridge-mcp",
-  "skill_version": "0.1.3",
+  "skill_version": "0.1.4",
   "evals": [
     {
       "id": 0,
       "prompt": "I'm using the openbridge MCP and the client only shows me four tools: tags, search, get_schema, and execute. I want to list all active jobs for subscription 128853. What do I do?",
-      "expected_output": "Recognizes Code Mode is active, instructs to use execute() with await get_jobs(subscription_id=128853, status='active'), optionally calls get_schema('get_jobs') first if uncertain.",
+      "expected_output": "Recognizes Code Mode is active, optionally calls get_schema(tools=['get_jobs']) before execute() if uncertain, then uses await call_tool('get_jobs', {'subscription_id': 128853, 'status': 'active'}) inside execute().",
       "files": [],
       "assertions": [
         {
@@ -14,7 +14,7 @@
         },
         {
           "name": "uses-execute-with-await",
-          "condition": "Output shows calling get_jobs (or equivalent) inside execute() with await, not as a top-level tool call"
+          "condition": "Output uses await call_tool('get_jobs', {...}) inside execute(), not a direct get_jobs(...) function call or top-level tool call"
         },
         {
           "name": "names-correct-tool",
@@ -117,7 +117,7 @@
     {
       "id": 5,
       "prompt": "On the openbridge MCP (Code Mode), list active primary jobs for subscription 128853 and look up the subscription itself. Show me the calls.",
-      "expected_output": "Two calls inside execute(): get_jobs(subscription_id=128853, status='active', is_primary='true') — note is_primary is a STRING per the server schema, not a Python bool. Then get_subscription_by_id(subscription_id='128853') — STRING, not int. Output ideally mentions reading get_schema for unfamiliar tools or notes that ID types vary across tools.",
+      "expected_output": "Two call_tool invocations inside execute(): await call_tool('get_jobs', {'subscription_id': 128853, 'status': 'active', 'is_primary': 'true'}) — is_primary is a STRING. Then await call_tool('get_subscription_by_id', {'subscription_id': '128853'}) — STRING, not int. Output ideally mentions calling get_schema(tools=[...]) before execute for unfamiliar tools or notes that ID types vary across tools.",
       "files": [],
       "assertions": [
         {
@@ -130,14 +130,14 @@
         },
         {
           "name": "acknowledges-type-discrepancy",
-          "condition": "Output mentions either reading the live schema via get_schema(...) when uncertain, or notes that ID types differ across tools (some str, some int) so the model should not assume uniformity"
+          "condition": "Output mentions either reading the live schema via get_schema(tools=[...]) when uncertain, or notes that ID types differ across tools (some str, some int) so the model should not assume uniformity"
         }
       ]
     },
     {
       "id": 6,
       "prompt": "On the openbridge MCP (Code Mode), get healthchecks for subscription 555 from yesterday. What's the call?",
-      "expected_output": "get_healthchecks(subscription_id='555', filter_date='YYYY-MM-DD') — uses filter_date with a specific ISO date, not last_days (the MCP schema does not accept last_days or page). For multi-day windows, recommend filter_date iteration or embed-cli's --last-days flag.",
+      "expected_output": "Inside execute(), await call_tool('get_healthchecks', {'subscription_id': '555', 'filter_date': 'YYYY-MM-DD'}) — uses a specific ISO date, not last_days (the MCP schema does not accept last_days or page). For multi-day windows, recommend filter_date iteration or embed-cli's --last-days flag.",
       "files": [],
       "assertions": [
         {

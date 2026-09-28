@@ -491,7 +491,7 @@ Before approving, ask:
 
 ## FastMCP Compatibility
 
-- The repo requires `fastmcp>=4,<5` with the `code-mode` and `tasks` extras (see `pyproject.toml`)
+- The repo requires `fastmcp>=4.0.10,<5` with the `code-mode` and `tasks` extras (see `pyproject.toml`)
 - Background tasks use `fastmcp_tasks.TasksExtension` and `fastmcp.utilities.tasks.TaskConfig`
 - FastMCP 4 removed server-side `ctx.sample()`; query validation calls the OpenAI Responses API directly
 - Context state API: Native `ctx.set_state()` and `ctx.get_state()` available

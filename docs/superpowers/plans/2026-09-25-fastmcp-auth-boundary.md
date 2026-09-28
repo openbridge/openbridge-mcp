@@ -6,7 +6,7 @@
 
 **Architecture:** Keep a narrow `OpenbridgeOAuthProxy(OAuthProxy)` as the OAuth server and compose it with an `OpenbridgeCredentialVerifier` using FastMCP `MultiAuth`. Direct credentials require verified account/user identity. OAuth uses that identity when present and otherwise derives an isolated task subject from the already-verified FastMCP reference token, so claim-shape differences cannot reject valid logins or merge tenant task namespaces.
 
-**Tech Stack:** Python 3.13+, FastMCP 4.0.5, MCP 2.2, httpx, requests, pytest, pytest-asyncio, Ruff
+**Tech Stack:** Python 3.13+, FastMCP 4.0.10, MCP 2.2, httpx, requests, pytest, pytest-asyncio, Ruff
 
 **Spec:** `docs/superpowers/specs/2026-09-25-fastmcp-auth-boundary-design.md`
 

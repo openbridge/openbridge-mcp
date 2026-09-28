@@ -1,19 +1,21 @@
 # Code Mode — meta-tools and the sandbox
 
 The Openbridge MCP runs Code Mode by default (`CODE_MODE=true`). In this mode
-the only tools the client sees are `tags`, `search`, `get_schema`,
-`get_schemas`, and `execute`. Every Openbridge operation — getting jobs,
-running queries, creating subscriptions — happens inside a Python sandbox
-called via `execute(code)`.
+the only tools the client sees are `tags`, `search`, `get_schema`, and
+`execute`. Every Openbridge operation — getting jobs, running queries,
+creating subscriptions — happens inside a Python sandbox called via
+`execute(code)`. The sandbox exposes one async bridge:
+`call_tool(tool_name, arguments)`.
 
 This file covers the four meta-tools, the sandbox limits, and the calling
 patterns that actually work. Read this before writing any `execute()` block.
 
-Code Mode does not bypass catalog gates. Call `get_capabilities()` before
-referencing privileged tools; access-token retrieval and mutation tools are
-absent unless `OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`. Enabling the flag
-makes them callable through the single `execute` surface, so retain explicit
-confirmation for destructive operations.
+Code Mode does not bypass catalog gates. Inside `execute`, call
+`call_tool("get_capabilities", {})` before referencing privileged tools;
+access-token retrieval and mutation tools are absent unless
+`OPENBRIDGE_ENABLE_PRIVILEGED_TOOLS=true`. Enabling the flag makes them
+callable through the single `execute` surface, so retain explicit confirmation
+for destructive operations.
 
 ## Why Code Mode
 
@@ -51,23 +53,20 @@ profiles"`). Returns matching tool names with one-line descriptions. The
 catalog is small enough that a generic phrase usually returns the right tool
 in the top three results.
 
-### `get_schema(tool_name)` and `get_schemas([…])`
+### `get_schema(tools=[…])`
 
-Returns the JSON Schema for one tool's input plus a brief description. Call
-it before invoking a tool you haven't used in this session — the parameter
-names and types are not memorizable across the catalog and the cost of a
-wrong call (a bad job, a wrong cancel) is much higher than the cost of a
-schema lookup.
-
-`get_schemas([…])` batches several lookups into one round-trip — use it when
-your `execute()` block will touch several tools.
+Returns parameter details for one or more named tools. Call it before
+invoking a tool you haven't used in this session — the parameter names and
+types are not memorizable across the catalog and the cost of a wrong call (a
+bad job, a wrong cancel) is much higher than the cost of a schema lookup.
+Pass `detail="full"` for complete JSON schemas.
 
 ### `execute(code)`
 
-Runs Python in a sandbox. The code body has access to every Openbridge tool
-as an `async` function with the same name as the catalog entry. `await` them.
-The sandbox returns the value of the final expression (or whatever you
-explicitly `return` from a wrapper function — see patterns).
+Runs Python in a sandbox. The code body can invoke catalog tools only through
+`await call_tool("tool_name", {"argument": value})`; tool names are not
+injected as Python functions. The sandbox returns whatever the code
+explicitly `return`s.
 
 ## Sandbox limits
 
@@ -89,12 +88,15 @@ explicitly `return` from a wrapper function — see patterns).
 
 ```python
 # inside execute()
-jobs = await get_jobs(subscription_id=987, status="active", is_primary="true")
+jobs = await call_tool(
+    "get_jobs",
+    {"subscription_id": 987, "status": "active", "is_primary": "true"},
+)
 return jobs
 ```
 
-Return the value as the final expression. The MCP serializes it back to the
-caller. Note: `is_primary` is a **string** `"true"` / `"false"` per the
+Return the value explicitly. The MCP serializes it back to the caller. Note:
+`is_primary` is a **string** `"true"` / `"false"` per the
 server schema, not a Python `bool` — and the parameter name is
 `is_primary`, not `primary`.
 
@@ -104,18 +106,21 @@ server schema, not a Python `bool` — and the parameter name is
 > `remote_identity_id` on the `get_remote_identity*` tools is `str`; on the
 > Amazon service tools (`get_amazon_api_access_token`,
 > `get_amazon_advertising_profiles`) it's `int`. **Always**
-> `await get_schema('<tool_name>')` for an unfamiliar tool — don't infer.
+> Call the `get_schema` meta-tool with `tools=["<tool_name>"]` before
+> `execute` for an unfamiliar tool — don't infer.
 
 ### Pattern 2 — schema-first when you're unsure
 
 ```python
-schema = await get_schema("create_job")
-# inspect schema.required, schema.properties to confirm parameter names
-job = await create_job(
-    subscription_id=987,
-    date_start="2024-01-01",
-    date_end="2024-01-07",
-    stage_ids=[1004, 1005],
+# Before execute(), call get_schema(tools=["create_job"]). Then run:
+job = await call_tool(
+    "create_job",
+    {
+        "subscription_id": 987,
+        "date_start": "2024-01-01",
+        "date_end": "2024-01-07",
+        "stage_ids": [1004, 1005],
+    },
 )
 return job
 ```
@@ -126,13 +131,18 @@ When you're certain of the shape, skip the schema call.
 
 ```python
 # Find the right table, get its schema, then run a bounded query
-products = await search_products("Amazon Ads Sponsored Brands")
+products = await call_tool(
+    "search_products", {"query": "Amazon Ads Sponsored Brands"}
+)
 product_id = products[0]["id"]
 
-tables = await list_product_tables(product_id=product_id, subscription_id=128853)
+tables = await call_tool(
+    "list_product_tables",
+    {"product_id": product_id, "subscription_id": 128853},
+)
 target = next(t for t in tables if t["name"] == "amzn_ads_sb_campaigns")
 
-schema = await get_table_schema(target["name"])
+schema = await call_tool("get_table_schema", {"table_name": target["name"]})
 return {
     "table": target["name"],
     "fields": [f["name"] for f in schema.get("fields", [])][:20],
@@ -148,14 +158,17 @@ no client round-trips between them.
 are only available when the server has `OPENBRIDGE_ENABLE_LLM_VALIDATION=true`
 AND a sampling key (`FASTMCP_SAMPLING_API_KEY` or `OPENAI_API_KEY`). On
 default deployments, neither is set — calling them raises `Unknown tool`.
-Confirm via `get_capabilities()` first, and have a fallback ready:
+Confirm through `call_tool("get_capabilities", {})` first, and have a fallback
+ready:
 
 ```python
-caps = await get_capabilities()
+caps = await call_tool("get_capabilities", {})
 query_enabled = caps.get("validate_query", {}).get("enabled", False)
 
 # Always-available discovery
-schema = await get_table_schema("amzn_ads_sb_campaigns")
+schema = await call_tool(
+    "get_table_schema", {"table_name": "amzn_ads_sb_campaigns"}
+)
 sql = "SELECT campaign_id, sum(cost_7d) FROM amzn_ads_sb_campaigns_master WHERE date >= '2024-01-01' GROUP BY 1 LIMIT 100"
 
 if not query_enabled:
@@ -169,10 +182,10 @@ if not query_enabled:
     }
 
 # GREEN path — query tools are registered
-v = await validate_query(query=sql, key_name="key finance")
+v = await call_tool("validate_query", {"query": sql, "key_name": "key finance"})
 if not v.get("decision", {}).get("allowed", False):
     return {"validation_failed": v}
-rows = await execute_query(query=sql, key_name="key finance")
+rows = await call_tool("execute_query", {"query": sql, "key_name": "key finance"})
 return {"rows": rows[:50], "row_count": len(rows)}
 ```
 
@@ -187,9 +200,12 @@ without spending an LLM call (LLM review is opt-in via
 # get_healthchecks on the openbridge MCP accepts only subscription_id and
 # filter_date. There is NO last_days, NO page parameter — pagination is
 # internal (capped at 10 pages). Scope by date instead.
-checks = await get_healthchecks(
-    subscription_id="128853",   # str on this tool
-    filter_date="2024-01-15",   # specific ISO date
+checks = await call_tool(
+    "get_healthchecks",
+    {
+        "subscription_id": "128853",  # str on this tool
+        "filter_date": "2024-01-15",  # specific ISO date
+    },
 )
 return checks
 ```
@@ -202,7 +218,10 @@ results = {}
 end = date(2024, 1, 15)
 for i in range(7):
     d = (end - timedelta(days=i)).isoformat()
-    results[d] = await get_healthchecks(subscription_id="128853", filter_date=d)
+    results[d] = await call_tool(
+        "get_healthchecks",
+        {"subscription_id": "128853", "filter_date": d},
+    )
 return results
 ```
 
@@ -230,11 +249,11 @@ list isn't exhaustive — many other modules are also blocked.
 
 **Other rules:**
 
-- Modifying or shadowing the bound tool functions breaks subsequent calls
-  — they're injected into the namespace; don't reassign them.
+- `call_tool` is the only injected tool bridge. Keep that name bound to the
+  provided function for the entire block.
 - Returning unserializable objects (sets, custom classes) breaks the
   serializer. Stick to dicts, lists, strings, numbers, booleans, None.
-- `try/except` around `await tool(...)` may catch `pydantic.ValidationError`
+- `try/except` around `await call_tool(...)` may catch validation exceptions
   and similar, but exception propagation policy across the sandbox boundary
   is not stable. **Validate inputs via `get_schema` *before* the call**, not
   via try/except after — see `error-envelope.md` for the return-vs-raise
@@ -258,6 +277,6 @@ round-trips.
 
 `CODE_MODE=false` exposes every tool in
 **`references/tools-catalog.md`** by name. Behavior is the same; you just
-call `get_jobs(...)` directly instead of inside `execute()`. The startup logs
-emit a WARNING in this mode — flag it to the user if you see it and ask
-whether they want Code Mode back on.
+call `get_jobs(...)` directly instead of using `call_tool` inside `execute()`.
+The startup logs emit a WARNING in this mode — flag it to the user if you see
+it and ask whether they want Code Mode back on.
