@@ -1,5 +1,14 @@
 # Environment
 .env
+.env.prod
+.env.staging
+.env.dev
+.env.test
+.env.local
+.env.development
+.env.production
+.env.test
+.env.development.local
 scripts/*
 docker-compose.local.yml
 *.pem
