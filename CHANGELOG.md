@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Multi-replica OAuth: when `OPENBRIDGE_OAUTH_STORAGE_URL` is set (e.g. `redis://openbridge-mcp-redis:6379/0`), `oauth_proxy` mode stores all OAuth state (DCR registrations, transactions, token mappings) in shared, Fernet-encrypted Redis instead of fastmcp's per-pod encrypted file store. The storage key is derived from `MCP_JWT_SIGNING_KEY` with the same derivation chain fastmcp's default store uses, so every replica reads/writes one shared state and OAuth legs may land on any pod. Startup fails loudly if the URL is set without a stable `MCP_JWT_SIGNING_KEY` of at least 32 bytes, with a malformed/scheme-less/host-less URL, or together with `FASTMCP_TEST_MODE` (which weakens key derivation); URL credentials are stripped before logging. Unset, behavior is unchanged. Enables lifting the HPA 1/1 pin in the applications repo.
+
 - Breaking security change: deprecated URL path tokens now default off, work only in `refresh_token` mode, require a unique secret of at least 32 bytes, and enforce required claims plus a seven-day maximum age and lifetime. Existing 30-day URLs older than seven days stop working. The checked production profile uses `oauth_proxy` without a path-token secret, so this rollout has no active production path URLs to migrate; any other issuer must move to seven-day tokens before enabling the compatibility mode.
 
 ## 0.3.4 - 2026-05-01
