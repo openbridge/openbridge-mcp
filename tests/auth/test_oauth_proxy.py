@@ -293,3 +293,224 @@ class TestAuthConfigMode:
         """AuthConfig.auth_mode can be set directly."""
         config = AuthConfig(auth_mode="oauth_proxy")
         assert config.auth_mode == "oauth_proxy"
+
+
+# ---------------------------------------------------------------------------
+# Redis-backed client_storage (multi-replica OAuth state)
+# ---------------------------------------------------------------------------
+
+
+class TestRedisClientStorage:
+    """Tests for OPENBRIDGE_OAUTH_STORAGE_URL shared-state wiring."""
+
+    # ≥32 bytes: the shared-storage guard requires production-grade keys.
+    STABLE_KEY = "stable-signing-key-0123456789abcdef0123456789abcdef"
+
+    def test_storage_url_unset_keeps_default_file_store(self, monkeypatch):
+        """Unset OPENBRIDGE_OAUTH_STORAGE_URL → fastmcp's per-pod file default."""
+        from key_value.aio.stores.filetree import FileTreeStore
+        from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+
+        monkeypatch.delenv("OPENBRIDGE_OAUTH_STORAGE_URL", raising=False)
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-key")
+
+        proxy = create_oauth_proxy(base_url="https://mcp.example.test")
+
+        assert isinstance(proxy._client_storage, FernetEncryptionWrapper)
+        assert isinstance(proxy._client_storage.key_value, FileTreeStore)
+
+    def test_storage_url_set_builds_redis_wrapped_storage(self, monkeypatch):
+        """Set OPENBRIDGE_OAUTH_STORAGE_URL → encrypted RedisStore passed to the proxy."""
+        from key_value.aio.stores.redis import RedisStore
+        from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv(
+            "OPENBRIDGE_OAUTH_STORAGE_URL", "redis://openbridge-mcp-redis:6379/0"
+        )
+
+        proxy = create_oauth_proxy(base_url="https://mcp.example.test")
+
+        storage = proxy._client_storage
+        assert isinstance(storage, FernetEncryptionWrapper)
+        assert isinstance(storage.key_value, RedisStore)
+        # URL wiring: lazy client constructed from the configured URL.
+        conn = storage.key_value._client.connection_pool.connection_kwargs
+        assert conn["host"] == "openbridge-mcp-redis"
+        assert conn["port"] == 6379
+        assert conn["db"] == 0
+        # Rotation safety: undecryptable entries are cache misses, not crashes.
+        assert storage.raise_on_decryption_error is False
+
+    def test_storage_url_requires_stable_signing_key(self, monkeypatch):
+        """Storage URL set without MCP_JWT_SIGNING_KEY fails loudly at startup.
+
+        An ephemeral per-process key would give every pod a different storage
+        encryption key — silently reintroducing the cross-pod OAuth failure.
+        """
+        monkeypatch.delenv("MCP_JWT_SIGNING_KEY", raising=False)
+        monkeypatch.setenv(
+            "OPENBRIDGE_OAUTH_STORAGE_URL", "redis://openbridge-mcp-redis:6379/0"
+        )
+
+        with pytest.raises(ValueError, match="MCP_JWT_SIGNING_KEY"):
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+    def test_derivation_matches_fastmcp_default_store(self, monkeypatch):
+        """Our derivation must decrypt fastmcp's own default-store ciphertext.
+
+        Builds a REAL default OAuthProxy (storage URL unset) and proves its
+        Fernet key equals ours: Fernet is authenticated, so successfully
+        decrypting fastmcp's ciphertext with our derived key is proof of key
+        identity — not a restatement of the implementation. This is the
+        regression tripwire for fastmcp changing its default derivation
+        inside the <5 range: the change fails here in CI at upgrade time
+        instead of silently forking shared state across pod generations at
+        runtime.
+        """
+        from cryptography.fernet import Fernet
+
+        from src.auth.oauth_proxy import _derive_storage_encryption_key
+
+        signing_key = self.STABLE_KEY
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", signing_key)
+        monkeypatch.delenv("OPENBRIDGE_OAUTH_STORAGE_URL", raising=False)
+
+        default_proxy = create_oauth_proxy(base_url="https://mcp.example.test")
+        fastmcp_ciphertext = default_proxy._client_storage._encryption_fn(
+            b"parity payload"
+        )
+
+        ours = Fernet(key=_derive_storage_encryption_key(signing_key))
+
+        assert ours.decrypt(fastmcp_ciphertext) == b"parity payload"
+
+    def test_derivation_deterministic_across_signing_keys(self):
+        """Same signing key → identical key on every pod; different key → different."""
+        from src.auth.oauth_proxy import _derive_storage_encryption_key
+
+        first = _derive_storage_encryption_key("stable-key-material-0123456789")
+        second = _derive_storage_encryption_key("stable-key-material-0123456789")
+        other = _derive_storage_encryption_key("a-completely-different-key")
+
+        assert first == second
+        assert first != other
+
+    def test_cross_wrapper_decrypts_each_other(self):
+        """Two independently built stores with the same key interoperate.
+
+        Unit-level stand-in for cross-pod behavior: state encrypted by one
+        store (one pod) decrypts cleanly in another (another pod).
+        """
+        from src.auth.oauth_proxy import _build_redis_client_storage
+
+        url = "redis://openbridge-mcp-redis:6379/0"
+        signing_key = "stable-key-material-0123456789"
+        pod_a = _build_redis_client_storage(storage_url=url, jwt_signing_key=signing_key)
+        pod_b = _build_redis_client_storage(storage_url=url, jwt_signing_key=signing_key)
+
+        ciphertext = pod_a._encryption_fn(b"cross-pod oauth payload")
+
+        # encryption_version: public attribute of the wrapper (currently 1) —
+        # the envelope version the decrypt closure expects.
+        assert (
+            pod_b._decryption_fn(ciphertext, pod_b.encryption_version)
+            == b"cross-pod oauth payload"
+        )
+
+    def test_rotation_decrypt_failure_is_cache_miss(self):
+        """State written under an old key reads as a miss, never an exception.
+
+        Behavioral check of the raise_on_decryption_error=False contract the
+        rotation story relies on (MCP_JWT_SIGNING_KEY rotation → fleet-wide
+        re-registration, not OAuth 500s): the OLD store's envelope is valid
+        (positive control below) but undecryptable by the NEW store.
+        """
+        from src.auth.oauth_proxy import _build_redis_client_storage
+
+        url = "redis://openbridge-mcp-redis:6379/0"
+        old = _build_redis_client_storage(
+            storage_url=url,
+            jwt_signing_key="old-stable-signing-key-0123456789abcdef",
+        )
+        new = _build_redis_client_storage(
+            storage_url=url,
+            jwt_signing_key="new-stable-signing-key-987654321fedcba",
+        )
+
+        envelope = old._encrypt_value({"client_id": "written-before-rotation"})
+
+        # Positive control: the envelope decrypts fine under its own key.
+        assert old._decrypt_value(envelope) == {
+            "client_id": "written-before-rotation"
+        }
+        # Under the rotated key it is a clean miss (None), not a raise.
+        assert new._decrypt_value(envelope) is None
+
+    def test_whitespace_storage_url_rejected(self, monkeypatch):
+        """A whitespace-only URL fails loudly instead of hitting localhost."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv("OPENBRIDGE_OAUTH_STORAGE_URL", "   ")
+
+        with pytest.raises(ValueError, match="whitespace"):
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "openbridge-mcp-redis:6379/0",  # no scheme
+            "http://openbridge-mcp-redis:6379/0",  # wrong scheme
+        ],
+    )
+    def test_storage_url_scheme_validated(self, monkeypatch, bad_url):
+        """Only redis://, rediss://, and unix:// schemes are accepted."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv("OPENBRIDGE_OAUTH_STORAGE_URL", bad_url)
+
+        with pytest.raises(ValueError, match="redis"):  # noqa: PT012
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+    def test_storage_url_requires_host(self, monkeypatch):
+        """A host-less redis:// URL fails loudly (py-key-value-aio would
+        silently fall back to localhost)."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv("OPENBRIDGE_OAUTH_STORAGE_URL", "redis://:6379/0")
+
+        with pytest.raises(ValueError, match="host"):  # noqa: PT012
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+    def test_storage_url_short_signing_key_rejected(self, monkeypatch):
+        """Shared storage requires ≥32 bytes of signing-key material."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "stable-key")  # 10 bytes
+        monkeypatch.setenv(
+            "OPENBRIDGE_OAUTH_STORAGE_URL", "redis://openbridge-mcp-redis:6379/0"
+        )
+
+        with pytest.raises(ValueError, match="32 bytes"):
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+    def test_whitespace_signing_key_treated_as_ephemeral(self, monkeypatch):
+        """A whitespace-only signing key counts as unset, triggering the
+        shared-storage guard."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", "   ")
+        monkeypatch.setenv(
+            "OPENBRIDGE_OAUTH_STORAGE_URL", "redis://openbridge-mcp-redis:6379/0"
+        )
+
+        with pytest.raises(ValueError, match="MCP_JWT_SIGNING_KEY"):
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+    def test_storage_url_password_not_logged(self, monkeypatch, caplog):
+        """URL credentials never reach the log stream."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv(
+            "OPENBRIDGE_OAUTH_STORAGE_URL",
+            "redis://:s3cret@openbridge-mcp-redis:6379/0",
+        )
+
+        with caplog.at_level(logging.INFO, logger="src.auth.oauth_proxy"):
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+        logged = " ".join(r.getMessage() for r in caplog.records)
+        assert "s3cret" not in logged
+        assert "openbridge-mcp-redis:6379/0" in logged
