@@ -249,6 +249,7 @@ Build a local `.env` from the template in README.md. **Never commit real secrets
   - `OPENBRIDGE_OAUTH_CLIENT_ID` (optional, default `"openbridge-mcp"`): Client ID sent to the Openbridge introspection endpoint. The endpoint reads credentials from embedded secrets; this value is forwarded but typically not validated.
   - `OPENBRIDGE_OAUTH_CLIENT_SECRET` (optional, default `"not-used"`): Client secret for the introspection endpoint. Same semantics as `OPENBRIDGE_OAUTH_CLIENT_ID`.
   - `OPENBRIDGE_OAUTH_UPSTREAM_CLIENT_ID` (optional, default `""`): Upstream `client_id` forwarded to `/auth/oauth/initialize`. Openbridge reads this from embedded secrets; leave empty unless instructed otherwise.
+  - `OPENBRIDGE_OAUTH_STORAGE_URL` (optional, default unset): Redis URL for shared, encrypted-at-rest OAuth state (DCR registrations, transactions, token mappings), e.g. `redis://openbridge-mcp-redis:6379/0`. Required for multi-replica deployments — unset, all OAuth state lives in a per-pod encrypted file store and any OAuth leg landing on a different pod fails. The storage encryption key is derived deterministically from `MCP_JWT_SIGNING_KEY` (mandatory, ≥32 bytes, when this is set); Redis never sees plaintext tokens, and key rotation invalidates shared state fleet-wide (clients simply re-register).
   - `AUTH0_*` variables do not configure this integration. OAuthProxy uses Openbridge's endpoints and the `OPENBRIDGE_OAUTH_*` credentials.
 
 - **Query Validation (AI-powered)**
