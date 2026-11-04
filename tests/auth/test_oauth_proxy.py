@@ -514,3 +514,25 @@ class TestRedisClientStorage:
         logged = " ".join(r.getMessage() for r in caplog.records)
         assert "s3cret" not in logged
         assert "openbridge-mcp-redis:6379/0" in logged
+
+    @pytest.mark.parametrize(
+        ("bad_url", "match"),
+        [
+            # Wrong scheme with credentials → scheme branch must not echo URL.
+            ("http://:s3cret@openbridge-mcp-redis:6379/0", "scheme 'http'"),
+            # Valid scheme, missing host, credentials present → host branch.
+            ("redis://:s3cret@:6379/0", "host"),
+        ],
+    )
+    def test_validation_errors_do_not_leak_url_credentials(
+        self, monkeypatch, bad_url, match
+    ):
+        """Validation failures never echo the raw URL (it may carry a
+        password, and the message reaches startup logs via main.py)."""
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv("OPENBRIDGE_OAUTH_STORAGE_URL", bad_url)
+
+        with pytest.raises(ValueError, match=match) as excinfo:
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+        assert "s3cret" not in str(excinfo.value)

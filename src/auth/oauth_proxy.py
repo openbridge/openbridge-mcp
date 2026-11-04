@@ -135,14 +135,18 @@ def _validate_storage_url(storage_url: str) -> None:
     parsed = urlparse(storage_url)
     scheme = (parsed.scheme or "").lower()
     if scheme not in _STORAGE_URL_SCHEMES:
+        # Echo only the parsed scheme, never the raw URL: a malformed URL
+        # may carry credentials, and this message reaches startup logs via
+        # main.py's error handler. A urlparse scheme cannot contain ":" or
+        # "@", so a password can never appear inside `scheme`.
         raise ValueError(
             "OPENBRIDGE_OAUTH_STORAGE_URL must use redis://, rediss://, or "
-            f"unix:// (got {storage_url!r})."
+            f"unix:// (got scheme {scheme!r})."
         )
     if scheme in {"redis", "rediss"} and not parsed.hostname:
         raise ValueError(
             "OPENBRIDGE_OAUTH_STORAGE_URL must include a host, e.g. "
-            f"redis://openbridge-mcp-redis:6379/0 (got {storage_url!r})."
+            "redis://openbridge-mcp-redis:6379/0."
         )
 
 
