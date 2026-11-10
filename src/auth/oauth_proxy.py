@@ -132,7 +132,20 @@ def _validate_storage_url(storage_url: str) -> None:
             "redis://host:port/db URL."
         )
 
-    parsed = urlparse(storage_url)
+    try:
+        parsed = urlparse(storage_url)
+    except ValueError:
+        # urlparse itself can embed the raw netloc -- credentials included --
+        # in its NFKC-normalization errors (e.g. a fullwidth colon in the
+        # host), and that message reaches startup logs via main.py's error
+        # handler. Replace it with a credential-free error and suppress the
+        # chained context so traceback-logging consumers cannot surface the
+        # original either.
+        raise ValueError(
+            "OPENBRIDGE_OAUTH_STORAGE_URL is malformed (unparseable or it "
+            "contains unsafe characters) and could not be validated: fix "
+            "the URL or unset it to use the per-pod default store."
+        ) from None
     scheme = (parsed.scheme or "").lower()
     if scheme not in _STORAGE_URL_SCHEMES:
         # Echo only the parsed scheme, never the raw URL: a malformed URL

@@ -536,3 +536,27 @@ class TestRedisClientStorage:
             create_oauth_proxy(base_url="https://mcp.example.test")
 
         assert "s3cret" not in str(excinfo.value)
+
+    def test_unparseable_storage_url_error_stays_credential_free(
+        self, monkeypatch
+    ):
+        """A URL that makes urlparse itself raise must stay credential-free.
+
+        A Unicode delimiter in the netloc (fullwidth colon, U+FF1A) triggers
+        urlparse's NFKC error, which embeds the raw netloc -- password
+        included. The surfaced ValueError must not echo it, and the chained
+        context must be suppressed so traceback-logging consumers cannot
+        surface the original either.
+        """
+        monkeypatch.setenv("MCP_JWT_SIGNING_KEY", self.STABLE_KEY)
+        monkeypatch.setenv(
+            "OPENBRIDGE_OAUTH_STORAGE_URL",
+            "redis://:s3cret@redis\uff1a6379/0",  # fullwidth colon in host
+        )
+
+        with pytest.raises(ValueError, match="malformed") as excinfo:
+            create_oauth_proxy(base_url="https://mcp.example.test")
+
+        assert "s3cret" not in str(excinfo.value)
+        assert "redis" not in str(excinfo.value)
+        assert excinfo.value.__suppress_context__ is True
