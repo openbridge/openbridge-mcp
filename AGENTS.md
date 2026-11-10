@@ -388,6 +388,15 @@ def test_create_job_success():
 
 ## Git & Commit Standards
 
+### Public Repository Hygiene
+
+**This repository is public.** Before creating any commit, PR, issue, comment, or branch, assume the content is world-readable:
+
+- **No internal information**: no internal hostnames or service names (e.g. cluster-internal DNS), environment URLs, deployment/infrastructure details (clusters, registries, pipelines, autoscaling/ops context), internal repository names or paths, or internal tooling references — in commit messages, PR titles/bodies, code comments, docs, tests, or example values.
+- **Generic examples**: example URLs, hostnames, and config values must use generic placeholders (`redis://localhost:6379/0`, `https://mcp.example.com/mcp`), never real internal values.
+- **Exception**: internal specifics may be included **only when the user explicitly asks** for that particular thing to be added or mentioned.
+- When picking up work, **check whether the repository is public or private** first — this rule applies to public repositories; private sibling repositories have their own conventions.
+
 ### Commit Messages and Agent Attribution
 
 - **Agents MUST identify themselves** in commits with:
